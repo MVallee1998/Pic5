@@ -47,7 +47,7 @@ global A = matrix(GF(2), all_nonzero_binary_vectors(pic))
 global m=size(A)[1]
 global M0 = matroid_from_matrix_rows(A)
 global S = Set{Matroid}()
-global rank5_simple_bin_matroids = Dict{Int,Vector{Vector{Vector{Int}}}}()
+global rank5_simple_bin_matroids = Dict{Int,Vector{Vector{Vector{UInt8}}}}()
 push!(S,M0)
 while m > pic+1
     print("number of elements ",m," number of matroids ",length(S),"\n")
@@ -63,33 +63,6 @@ open("rank_4_simple_bin_mat_DB.jls", "w") do io
     serialize(io, rank5_simple_bin_matroids)
 end
 
-# load
-# global mat_DB = open("rank_5_simple_bin_mat_DB.jls", "r") do io
-#     deserialize(io)
-# end
-
-# for i=2:m
-#     S=Set{Matroid}()
-#     for J in ProgressBar(IterTools.subsets(axes(A,1),i+5))
-#         M1=matroid_from_matrix_rows(A[J,:])
-#         is_isom=false
-#         for M2 in S
-#             if is_isomorphic(M1,M2)
-#                 is_isom=true
-#                 break
-#             end
-#         end
-#         if !is_isom
-#             push!(S,M1)
-#         end
-#     end
-#     io=open("bin_mat_" * string(i+5) * "_" * string(i),"w")
-#     print("number of elements ",m," number of matroids ",length(S),"\n")
-#     for M in S
-#         println(io,cobases(M))
-#     end
-#     close(io)
-# end
 
 
 
