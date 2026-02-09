@@ -41,7 +41,7 @@ function find_lower_dim_matroids(list_bin_mat)
     return S_rep
 end
 
-global pic = 5
+global pic = 4
 
 global A = matrix(GF(2), all_nonzero_binary_vectors(pic))
 global m=size(A)[1]
@@ -49,7 +49,7 @@ global M0 = matroid_from_matrix_rows(A)
 global S = Set{Matroid}()
 global rank5_simple_bin_matroids = Dict{Int,Vector{Vector{Vector{Int}}}}()
 push!(S,M0)
-while m > 6
+while m > pic+1
     print("number of elements ",m," number of matroids ",length(S),"\n")
     rank5_simple_bin_matroids[m]=[bases(M) for M in S]
     global S = find_lower_dim_matroids(S)
@@ -59,7 +59,7 @@ end
 using Serialization
 
 # save
-open("rank_5_simple_bin_mat_DB.jls", "w") do io
+open("rank_4_simple_bin_mat_DB.jls", "w") do io
     serialize(io, rank5_simple_bin_matroids)
 end
 
