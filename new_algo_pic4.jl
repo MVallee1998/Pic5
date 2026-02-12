@@ -582,6 +582,3 @@ open("Pic_4_DB_6-15.jls", "w") do io
     serialize(io, pseudo_manifolds_DB)
 end
 
-# for (m,data_psdmfd) in enumerate(pseudo_manifolds_DB)
-#     println("for %(m):",sum([length(data) for data in data_psdmfd))
-# end
