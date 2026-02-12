@@ -261,134 +261,6 @@ function kernel_basis_mod2_sparse(A)
 end
 
 """
-Compute the fixpoint of constraints by alternating:
-- S (must be 1) → find saturated rows → T (must be 0)
-- T (must be 0) → find rows at 1 → U (must be 1 to reach 2)
-- U → new T, etc.
-"""
-function compute_constraint_fixpoint(A, B, S_init)
-    m, n = size(A)
-    
-    S = copy(S_init)
-    T = falses(n)
-    
-    max_iterations = 1  # Prevent infinite loops
-    
-    for iter in 1:max_iterations
-        S_old = copy(S)
-        T_old = copy(T)
-        
-        # Compute what x would be if we only set S positions
-        x_partial = compute_partial_solution(B, S, T)
-        
-        if isnothing(x_partial)
-            # Constraints are inconsistent
-            return (S, T)
-        end
-        
-        # Compute A * x_partial
-        Ax = zeros(Int, m)
-        for j in 1:n
-            if x_partial[j]
-                for p in nzrange(A, j)
-                    i = rowvals(A)[p]
-                    Ax[i] += A.nzval[p]
-                end
-            end
-        end
-        
-        # Better: iterate over columns
-        for j in 1:n
-            if S[j] || T[j]
-                continue  # Already constrained
-            end
-            
-            # Check if j must be 0 (appears in saturated row)
-            must_be_zero = false
-            for p in nzrange(A, j)
-                i = rowvals(A)[p]
-                if Ax[i] == 2 && A.nzval[p] != 0
-                    must_be_zero = true
-                    break
-                end
-            end
-            
-            if must_be_zero
-                T[j] = true
-                continue
-            end
-            
-            # Check if j must be 1 (needed to saturate a row at 1)
-            must_be_one = false
-            for p in nzrange(A, j)
-                i = rowvals(A)[p]
-                if Ax[i] == 1 && A.nzval[p] != 0
-                    # Check if j is the ONLY way to saturate row i
-                    # Count how many unset columns could saturate row i
-                    candidates = 0
-                    for p2 in nzrange(A, i)  # Wrong - need CSR
-                        # This is CSC, need to find all j' where A[i,j'] != 0
-                    end
-                    # For now, mark as must be 1 if it's in a row with value 1
-                    must_be_one = true
-                    break
-                end
-            end
-            
-            if must_be_one
-                S[j] = true
-            end
-        end
-        
-        # Check convergence
-        if S == S_old && T == T_old
-            break
-        end
-    end
-    
-    return (S, T)
-end
-
-"""
-Compute a partial solution satisfying S (must be 1) and T (must be 0) constraints.
-Returns nothing if constraints are inconsistent with kernel.
-"""
-function compute_partial_solution(B, S, T)
-    isempty(B) && return falses(length(S))
-    
-    n = length(B[1])
-    
-    # Use echelon form to find a solution
-    B_ech, pivots = kernel_basis_echelon_prioritize_with_constraints(B, S, T)
-    
-    x = falses(n)
-    
-    # Set coefficients based on constraints
-    for i in 1:length(pivots)
-        piv = pivots[i]
-        if S[piv]
-            x .⊻= B_ech[i]
-        elseif T[piv]
-            # Coefficient is 0, don't add
-        else
-            # Free - leave at 0 for partial solution
-        end
-    end
-    
-    # Check if S constraints are satisfied
-    for j in 1:n
-        if S[j] && !x[j]
-            return nothing
-        end
-        if T[j] && x[j]
-            return nothing
-        end
-    end
-    
-    return x
-end
-
-"""
 Echelon form prioritizing: S columns (must be 1), then T columns (must be 0), then others.
 """
 function kernel_basis_echelon_prioritize_with_constraints(B, S, T)
@@ -492,15 +364,6 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
 
     k_init = length(B_ech_init)
     @assert k_init ≤ 64
-
-    # Build initial forced y from pivots that correspond to S
-    y_init = falses(n)
-    for i in 1:k_init
-        piv = pivots_init[i]
-        if S[piv]
-            y_init .⊻= B_ech_init[i]
-        end
-    end
 
     # 2) Propagate: any row with sum == 2 forbids all other columns that touch that row
     row_sums = zeros(Int, m)
@@ -707,9 +570,7 @@ end
 global pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 
 
-# open("Pic_4_DB_6-9.jls", "w") do io
-#     serialize(io, pseudo_manifolds_DB)
-# end
+
 
 # global pseudo_manifolds_DB = open("Pic_4_DB_6-9.jls", "r") do io
 #     deserialize(io)
@@ -717,6 +578,10 @@ global pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 
 build_finalDB_single_v!(pseudo_manifolds_DB,mat_DB_bin,iso_DB,15)
 
-for (m,data_psdmfd) in enumerate(pseudo_manifolds_DB)
-    println("for %(m):",sum([length(data) for data in data_psdmfd]))
+open("Pic_4_DB_6-15.jls", "w") do io
+    serialize(io, pseudo_manifolds_DB)
 end
+
+# for (m,data_psdmfd) in enumerate(pseudo_manifolds_DB)
+#     println("for %(m):",sum([length(data) for data in data_psdmfd))
+# end
