@@ -272,7 +272,7 @@ function compute_constraint_fixpoint(A, B, S_init)
     S = copy(S_init)
     T = falses(n)
     
-    max_iterations = 10  # Prevent infinite loops
+    max_iterations = 1  # Prevent infinite loops
     
     for iter in 1:max_iterations
         S_old = copy(S)
@@ -472,13 +472,13 @@ end
 end
 
 
-function enumerate_kernel_with_constraints_bitvector(A, B, S)
-
+function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int}, B::Vector{BitVector}, S::BitVector)
     m, n = size(A)
     rows = sparse_rows(A)
 
     results = BitVector[]
 
+    # Special case: no basis (only zero vector possible)
     if isempty(B)
         y = falses(n)
         if all(.!S) && check_Ay_is_02(rows, y)
@@ -487,13 +487,54 @@ function enumerate_kernel_with_constraints_bitvector(A, B, S)
         return results
     end
 
-    # # Fix constraints
-    # S_fixed, T_fixed = compute_constraint_fixpoint(A, B, S)
-    S_fixed = S
-    T_fixed = falses(length(S))
+    # 1) Build an initial echelon prioritizing S only, to get the forced part of y
+    B_ech_init, pivots_init = kernel_basis_echelon_prioritize_with_constraints(B, S, falses(n))
 
-    # Echelon form
-    B_ech, pivots = kernel_basis_echelon_prioritize_with_constraints(B, S_fixed, T_fixed)
+    k_init = length(B_ech_init)
+    @assert k_init ≤ 64
+
+    # Build initial forced y from pivots that correspond to S
+    y_init = falses(n)
+    for i in 1:k_init
+        piv = pivots_init[i]
+        if S[piv]
+            y_init .⊻= B_ech_init[i]
+        end
+    end
+
+    # 2) Propagate: any row with sum == 2 forbids all other columns that touch that row
+    row_sums = zeros(Int, m)
+    for i in 1:m
+        s = 0
+        for j in rows[i]
+            s += S[j]
+            if s > 2
+                s = 3  # mark >2 (will break the constraint later)
+                break
+            end
+        end
+        row_sums[i] = s
+    end
+
+    T_fixed = falses(n)
+    for i in 1:m
+        if row_sums[i] == 2
+            for j in rows[i]
+                # if column j is not already forced to 1, mark it forbidden
+                if !S[j]
+                    T_fixed[j] = true
+                end
+            end
+        end
+    end
+
+    # Conflict: a column both forced 1 and forbidden -> no solutions
+    if any(S .& T_fixed)
+        return results
+    end
+
+    # 3) Recompute echelon prioritizing S then T_fixed (final constraints for this single propagation)
+    B_ech, pivots = kernel_basis_echelon_prioritize_with_constraints(B, S, T_fixed)
 
     k = length(B_ech)
     @assert k ≤ 64
@@ -504,7 +545,7 @@ function enumerate_kernel_with_constraints_bitvector(A, B, S)
 
     for i in 1:k
         piv = pivots[i]
-        if S_fixed[piv]
+        if S[piv]
             forced_one[i] = true
         elseif T_fixed[piv]
             forced_zero[i] = true
@@ -519,7 +560,7 @@ function enumerate_kernel_with_constraints_bitvector(A, B, S)
     # y = Bx (mod 2)
     y = falses(n)
 
-    # Build forced base vector
+    # Apply forced ones to y
     for i in 1:k
         if forced_one[i]
             x_bits |= UInt64(1) << (i-1)
@@ -527,12 +568,12 @@ function enumerate_kernel_with_constraints_bitvector(A, B, S)
         end
     end
 
-    # Check consistency
-    for j in 1:n
-        if (S_fixed[j] && !y[j]) || (T_fixed[j] && y[j])
-            return results
-        end
-    end
+    # # Check immediate consistency with constraints S / T_fixed
+    # for j in 1:n
+    #     if (S[j] && !y[j]) || (T_fixed[j] && y[j])
+    #         return results
+    #     end
+    # end
 
     num_free = length(free_indices)
 
@@ -545,16 +586,15 @@ function enumerate_kernel_with_constraints_bitvector(A, B, S)
 
     sizehint!(results, min(1 << num_free, 1000))
 
-    # First candidate
+    # first candidate
     if check_Ay_is_02(rows, y)
         push!(results, copy(y))
     end
 
     total = UInt64(1) << num_free
 
-    # Gray code enumeration
+    # Gray code enumeration over free coefficients
     for i in UInt64(1):(total - 1)
-
         gray      = i ⊻ (i >> 1)
         gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
         changed   = trailing_zeros(gray ⊻ gray_prev) + 1
@@ -574,6 +614,7 @@ function enumerate_kernel_with_constraints_bitvector(A, B, S)
 
     return results
 end
+
 
 
 global mat_DB_bin = open("rank_4_simple_bin_mat_DB_bin.jls", "r") do io
@@ -610,12 +651,12 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                 all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A,basis,mandatory_facets_bit)
                 for K_bit in all_solutions_bit
                     facets_bin = [facet_bin for facet_bin in compl_bases[findall(K_bit)]]
-                    if !euler_sphere_test(facets_bin)
-                        continue
-                    end
-                    if is_mod2_sphere(facets_bin)
+                    if euler_sphere_test(facets_bin)
                         push!(pseudo_manifolds_DB[m][l],K_bit)
                     end
+                    # if is_mod2_sphere(facets_bin)
+                    #     push!(pseudo_manifolds_DB[m][l],K_bit)
+                    # end
                 end
             else
                 index_contraction, v_contract, perm = iso_DB[m][l]
@@ -647,12 +688,12 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                     if m<16
                         for K_bit in all_solutions_bit
                             facets_bin = [facet_bin for facet_bin in compl_bases[findall(K_bit)]]
-                            if !euler_sphere_test(facets_bin)
-                                continue
-                            end
-                            if is_mod2_sphere(facets_bin)
+                            if euler_sphere_test(facets_bin)
                                 push!(pseudo_manifolds_DB[m][l],K_bit)
                             end
+                            # if is_mod2_sphere(facets_bin)
+                            #     push!(pseudo_manifolds_DB[m][l],K_bit)
+                            # end
                         end
                     else
                         union!(pseudo_manifolds_DB[m][l],all_solutions_bit)
