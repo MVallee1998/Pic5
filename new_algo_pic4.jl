@@ -36,8 +36,8 @@ function boundary_incidence_facets_to_ridges(facets::Vector{UInt16})
         for i=0:(8*sizeof(f)-1)
             if (f>>i)&1==1
                 r = f ⊻ (UInt16(1)<<i)
-                i = ridge_dict[r]
-                push!(I, i)
+                row_idx = ridge_dict[r]  
+                push!(I, row_idx)
                 push!(J, j)
             end
         end
@@ -46,71 +46,6 @@ function boundary_incidence_facets_to_ridges(facets::Vector{UInt16})
     A = sparse(I, J, true, m, n)  # SparseMatrixCSC{Bool} 
 
     return ridges, A
-end
-
-function mod2_rank_nemo(A::SparseMatrixCSC)
-    m, n = size(A)
-    if m == 0 || n == 0
-        return 0
-    end
-
-    M = zero_matrix(F2, m, n)
-
-    # Fill matrix directly from sparse structure
-    for col in 1:n
-        for ptr in A.colptr[col]:(A.colptr[col+1]-1)
-            row = A.rowval[ptr]
-            M[row, col] = F2(1)
-        end
-    end
-
-    return rank(M)
-end
-
-
-function is_mod2_sphere(top_facets::Vector{UInt16})
-
-    isempty(top_facets) && return true
-
-    d = count_ones(top_facets[1]) - 1
-
-    current_faces = top_facets
-
-    # ---- Step 1: Top homology β_d ----
-    # β_d = (#d-faces - rank ∂_d)
-    ridges, B = boundary_incidence_facets_to_ridges(current_faces)
-    rank_prev = mod2_rank_nemo(B)
-
-    n_d = length(current_faces)
-    β_d = n_d - rank_prev
-    β_d == 1 || return false
-
-    current_faces = ridges
-
-    # ---- Step 2: Middle dimensions ----
-    # For i = d-1 down to 1:
-    for dim = d-1:-1:1
-
-        ridges, B = boundary_incidence_facets_to_ridges(current_faces)
-        rank_curr = mod2_rank_nemo(B)
-
-        n_i = length(current_faces)
-
-        # β_i = (#i-faces - rank ∂_i) - rank ∂_{i+1}
-        β_i = (n_i - rank_curr) - rank_prev
-        β_i == 0 || return false
-
-        rank_prev = rank_curr
-        current_faces = ridges
-    end
-
-    # ---- Step 3: β_0 ----
-    # β_0 = (#vertices) - rank ∂_1
-    n_0 = length(current_faces)
-    β_0 = n_0 - rank_prev
-    β_0 == 1 || return false
-
-    return true
 end
 
 function euler_characteristic_sphere(top_facets::Vector{UInt16})
