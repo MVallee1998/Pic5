@@ -153,7 +153,7 @@ iso_DB = open("rank_4_iso_DB_7-15_bin.jls", "r") do io
     deserialize(io)
 end
 
-pseudo_manifolds_DB = open("Pic_4_DB_6-15.jls", "r") do io
+pseudo_manifolds_DB = open("Pic_4_DB_6-15_test3.jls", "r") do io
     deserialize(io)
 end
 
@@ -231,10 +231,10 @@ for m=6:15
     println("number of seeds up to isom for m=$(m): ",length(database_tc_seed_PLS[(m-5,m)]))
 end
 
-open("Pic_4_tc_PLS.jls", "w") do io
-    serialize(io, database_tc_PLS)
-end
+# open("Pic_4_tc_PLS.jls", "w") do io
+#     serialize(io, database_tc_PLS)
+# end
 
-open("Pic_4_tc_seed_PLS.jls", "w") do io
-    serialize(io, database_tc_seed_PLS)
-end
+# open("Pic_4_tc_seed_PLS.jls", "w") do io
+#     serialize(io, database_tc_seed_PLS)
+# end

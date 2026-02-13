@@ -464,8 +464,8 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                     for facet_L in mat_DB[m-1][index_contraction][findall(L)]
                         facet_bin = UInt16(0)
                         for (i,j) in perm
-                            if (facet_L>>(j-1))&1==1
-                                facet_bin |= UInt16(1)<<(i-1)
+                            if (facet_L>>(i-1))&1==1
+                                facet_bin |= UInt16(1)<<(j-1)
                             end
                         end
                         push!(mandatory_facets,facet_bin)
@@ -478,6 +478,11 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                     # println("bases:",bases)
                     sort!(mandatory_facets)
                     mandatory_facets_bit = subset_bitvector(bases, mandatory_facets)
+                    if count(mandatory_facets_bit) != length(mandatory_facets)
+                        @warn "Some mandatory facets not found in bases!" m l count(mandatory_facets_bit) length(mandatory_facets)
+                        # Or throw an error if this should never happen:
+                        # error("Missing mandatory facets")
+                    end
                     t1 = time()
                     all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A,basis,mandatory_facets_bit)
                     if (time() - t1)> 1
@@ -513,7 +518,7 @@ global pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 
 build_finalDB_single_v!(pseudo_manifolds_DB,mat_DB_bin,iso_DB,15)
 
-open("Pic_4_DB_6-15.jls", "w") do io
+open("Pic_4_DB_6-15_test3.jls", "w") do io
     serialize(io, pseudo_manifolds_DB)
 end
 

@@ -18,14 +18,11 @@ function find_lower_dim_matroids(list_bin_mat)
     local S_rep = Set{Matroid}()
     @showprogress for M in list_bin_mat
         for v in matroid_groundset(M)
-            if v in coloops(M)
-                print("is in coloop")
-                continue
-            end
+            # if v in coloops(M)
+            #     print("is in coloop")
+            #     continue
+            # end
             M1 = deletion(M,v)
-            if rank(M)!=rank(M1)
-                continue
-            end
             is_isom=false
             for M2 in S_rep
                 if is_isomorphic(M1,M2)
@@ -73,7 +70,7 @@ end
 using Serialization
 
 # save
-open("rank_4_simple_bin_mat_DB_bin.jls", "w") do io
+open("rank_4_simple_bin_mat_DB_bin_test.jls", "w") do io
     serialize(io, simple_bin_matroids_bin)
 end
 
