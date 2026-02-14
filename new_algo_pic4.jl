@@ -209,9 +209,9 @@ function kernel_basis_echelon_prioritize_with_constraints(B, S, T)
     pivots = Int[]
     
     # Build column order: S first, then T, then others
-    cols_in_S = [j for j in 1:n if S[j]]
-    cols_in_T = [j for j in 1:n if !S[j] && T[j]]
-    cols_other = [j for j in 1:n if !S[j] && !T[j]]
+    cols_in_S = findall(S)
+    cols_in_T = findall(T)
+    cols_other = findall(.!(S.|T))
     col_order = vcat(cols_in_S, cols_in_T, cols_other)
     
     current_row = 1
@@ -294,22 +294,12 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         return results
     end
 
-    # 1) Build an initial echelon prioritizing S only, to get the forced part of y
-    B_ech_init, pivots_init = kernel_basis_echelon_prioritize_with_constraints(B, S, falses(n))
-
-    k_init = length(B_ech_init)
-    @assert k_init ≤ 64
-
-    # 2) Propagate: any row with sum == 2 forbids all other columns that touch that row
+    # 1) Propagate: any row with sum == 2 forbids all other columns that touch that row
     row_sums = zeros(Int, m)
     for i in 1:m
         s = 0
         for j in rows[i]
             s += S[j]
-            if s > 2
-                s = 3  # mark >2 (will break the constraint later)
-                break
-            end
         end
         row_sums[i] = s
     end
@@ -326,15 +316,15 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         end
     end
 
-    # Conflict: a column both forced 1 and forbidden -> no solutions
-    if any(S .& T_fixed)
-        return results
-    end
-
-    # 3) Recompute echelon prioritizing S then T_fixed (final constraints for this single propagation)
+    # 2) Compute echelon prioritizing S then T_fixed (final constraints for this single propagation)
     B_ech, pivots = kernel_basis_echelon_prioritize_with_constraints(B, S, T_fixed)
-
     k = length(B_ech)
+    
+    # M=[B_ech[l][findall(S.||T_fixed)] for l=1:k]
+    # display(M)
+    # if M[end][end]==0
+    #     display(M)
+    # end
     @assert k ≤ 64
 
     forced_one = falses(k)
@@ -366,12 +356,12 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         end
     end
 
-    # # Check immediate consistency with constraints S / T_fixed
-    # for j in 1:n
-    #     if (S[j] && !y[j]) || (T_fixed[j] && y[j])
-    #         return results
-    #     end
-    # end
+    # Check immediate consistency with constraints S / T_fixed
+    for j in 1:n
+        if (S[j] && !y[j]) || (T_fixed[j] && y[j])
+            return results
+        end
+    end
 
     num_free = length(free_indices)
 
@@ -409,17 +399,16 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
             push!(results, copy(y))
         end
     end
-
     return results
 end
 
 
 
-global mat_DB_bin = open("rank_4_simple_bin_mat_DB_bin.jls", "r") do io
+mat_DB_bin = open("rank_4_simple_bin_mat_DB_bin_test.jls", "r") do io
     deserialize(io)
 end
 
-global iso_DB = open("rank_4_iso_DB_7-15_bin.jls", "r") do io
+iso_DB = open("rank_4_iso_DB_7-15_bin_test.jls", "r") do io
     deserialize(io)
 end
 
@@ -450,7 +439,7 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                 for K_bit in all_solutions_bit
                     facets_bin = [facet_bin for facet_bin in compl_bases[findall(K_bit)]]
                     if euler_sphere_test(facets_bin)
-                        push!(pseudo_manifolds_DB[m][l],K_bit)
+                        push!(pseudo_manifolds_DB[m][l],copy(K_bit))
                     end
                     # if is_mod2_sphere(facets_bin)
                     #     push!(pseudo_manifolds_DB[m][l],K_bit)
@@ -468,7 +457,7 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                                 facet_bin |= UInt16(1)<<(j-1)
                             end
                         end
-                        push!(mandatory_facets,facet_bin)
+                        push!(mandatory_facets,copy(facet_bin))
                     end
                     # println("facets:",[[i for i=1:(8*sizeof(facet)) if (facet>>(i-1))&1==1] for facet in mandatory_facets])
                     # println("bases:",[[i for i=1:(8*sizeof(base)) if (base>>(i-1))&1==1] for base in bases])
@@ -492,14 +481,14 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                         for K_bit in all_solutions_bit
                             facets_bin = [facet_bin for facet_bin in compl_bases[findall(K_bit)]]
                             if euler_sphere_test(facets_bin)
-                                push!(pseudo_manifolds_DB[m][l],K_bit)
+                                push!(pseudo_manifolds_DB[m][l],copy(K_bit))
                             end
                             # if is_mod2_sphere(facets_bin)
                             #     push!(pseudo_manifolds_DB[m][l],K_bit)
                             # end
                         end
                     else
-                        union!(pseudo_manifolds_DB[m][l],all_solutions_bit)
+                        union!(pseudo_manifolds_DB[m][l],copy(all_solutions_bit))
                     end
                 end
             end
@@ -507,7 +496,7 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
     end
 end
 
-global pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
+pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 
 
 
@@ -518,7 +507,31 @@ global pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 
 build_finalDB_single_v!(pseudo_manifolds_DB,mat_DB_bin,iso_DB,15)
 
-open("Pic_4_DB_6-15_test3.jls", "w") do io
-    serialize(io, pseudo_manifolds_DB)
+database_before_iso = Dict{Tuple{Int,Int}, Set{Vector{UInt16}}}()
+
+for m=6:15
+    for (l,bases) in enumerate(mat_DB_bin[m])
+        # display(bases)
+        V = reduce(|,bases)
+        compl_bases = [base⊻V for base in bases]
+        @showprogress desc="for m=$(m) " for facets_bit in pseudo_manifolds_DB[m][l]
+            facets_bin = compl_bases[findall(facets_bit)]
+            nv_K = count_ones(reduce(|,facets_bin))
+            d_K = count_ones(facets_bin[1])-1
+            if !((d_K,nv_K) in keys(database_before_iso))
+                database_before_iso[(d_K,nv_K)] = Set{Vector{UInt16}}()
+            end
+            push!(database_before_iso[(d_K,nv_K)],copy(sort(facets_bin)))
+        end
+    end
 end
+            
+open("rank4_db_before_iso_test8.jls", "w") do io
+    serialize(io, database_before_iso)
+end
+
+
+# open("Pic_4_DB_6-15_test7.jls", "w") do io
+#     serialize(io, pseudo_manifolds_DB)
+# end
 

@@ -38,14 +38,13 @@ function find_lower_dim_matroids(list_bin_mat)
     return S_rep
 end
 
-global pic = 4
+pic = 4
 
-global A = matrix(GF(2), all_nonzero_binary_vectors(pic))
-global m=size(A)[1]
-global M0 = matroid_from_matrix_rows(A)
+A = matrix(GF(2), all_nonzero_binary_vectors(pic))
+M0 = matroid_from_matrix_rows(A)
 global S = Set{Matroid}()
-global simple_bin_matroids = Dict{Int,Vector{Vector{Vector{UInt8}}}}()
-global simple_bin_matroids_bin = Dict{Int,Vector{Vector{UInt16}}}()
+simple_bin_matroids = Dict{Int,Vector{Vector{Vector{UInt8}}}}()
+simple_bin_matroids_bin = Dict{Int,Vector{Vector{UInt16}}}()
 
 function make_binary(L::Vector{Vector{UInt8}})
     result = Vector{UInt16}()
@@ -54,6 +53,7 @@ function make_binary(L::Vector{Vector{UInt8}})
     end
     return sort(result)
 end
+global m=size(A)[1]
 
 push!(S,M0)
 while m > pic+1
