@@ -200,24 +200,24 @@ Echelon form prioritizing: S columns (must be 1), then T columns (must be 0), th
 """
 function kernel_basis_echelon_prioritize_with_constraints(B, S, T)
     isempty(B) && return (BitVector[], Int[])
-    
+
     n = length(B[1])
     k = length(B)
-    
+
     # Copy basis vectors
     B_ech = [copy(b) for b in B]
     pivots = Int[]
-    
+
     # Build column order: S first, then T, then others
     cols_in_S = findall(S)
     cols_in_T = findall(T)
-    cols_other = findall(.!(S.|T))
+    cols_other = findall(.!(S .| T))
     col_order = vcat(cols_in_S, cols_in_T, cols_other)
-    
+
     current_row = 1
     for col in col_order
         current_row > k && break
-        
+
         # Find a vector with 1 at position col
         piv = 0
         for r in current_row:k
@@ -226,27 +226,33 @@ function kernel_basis_echelon_prioritize_with_constraints(B, S, T)
                 break
             end
         end
-        
+
         piv == 0 && continue
-        
+
         # Swap
         if piv != current_row
             B_ech[current_row], B_ech[piv] = B_ech[piv], B_ech[current_row]
         end
-        
+
         push!(pivots, col)
-        
-        # Eliminate
+
+        # Eliminate other rows
         for r in 1:k
             if r != current_row && B_ech[r][col]
                 B_ech[r] .⊻= B_ech[current_row]
             end
         end
-        
+
         current_row += 1
     end
-    
-    return (B_ech, pivots)
+
+    # Trim B_ech to independent rows only
+    rank = length(pivots)
+    if rank == 0
+        return (BitVector[], Int[])
+    else
+        return (B_ech[1:rank], pivots)
+    end
 end
 
 
@@ -318,14 +324,10 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
 
     # 2) Compute echelon prioritizing S then T_fixed (final constraints for this single propagation)
     B_ech, pivots = kernel_basis_echelon_prioritize_with_constraints(B, S, T_fixed)
-    k = length(B_ech)
-    
-    # M=[B_ech[l][findall(S.||T_fixed)] for l=1:k]
-    # display(M)
-    # if M[end][end]==0
-    #     display(M)
-    # end
-    @assert k ≤ 64
+    k = length(B_ech)   # now k == rank
+    @assert k <= 64     # assert on rank (or choose a different bound / strategy)
+    @assert length(pivots) == k
+
 
     forced_one = falses(k)
     forced_zero = falses(k)
@@ -382,7 +384,7 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
     total = UInt64(1) << num_free
 
     # Gray code enumeration over free coefficients
-    for i in UInt64(1):(total - 1)
+    for i in UInt64(1):(total - UInt64(1))
         gray      = i ⊻ (i >> 1)
         gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
         changed   = trailing_zeros(gray ⊻ gray_prev) + 1
@@ -422,7 +424,7 @@ function subset_bitvector(superset::Vector{UInt16}, subset::Vector{UInt16})
 end
 
 
-function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVector}}},mat_DB::Dict{Int,Vector{Vector{UInt16}}},iso_DB::Dict{Int,Dict{Int,Tuple{Int,Int,Any}}},mmax;mstart=-1,list_links=[])
+function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVector}}},mat_DB::Dict{Int,Vector{Vector{UInt16}}},iso_DB::Dict{Int,Dict{Int,Vector{Tuple{Int,Any}}}},mmax;mstart=-1,list_links=[])
     mmin = minimum(collect(keys(mat_DB)))
     if mstart == -1
         mstart = mmin
@@ -450,60 +452,49 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                     # end
                 end
             else
-                index_contraction, v_contract, perm = iso_DB[m][l]
-                @showprogress desc="Number of links $(length(pseudo_manifolds_DB[m-1][index_contraction]))" for L in pseudo_manifolds_DB[m-1][index_contraction]
-                    mandatory_facets =Vector{UInt16}()
-                    # println(perm)
-                    for facet_L in mat_DB[m-1][index_contraction][findall(L)] # gives the binary facets of L
-                        facet_bin = UInt16(0)
-                        for (i,j) in perm
-                            if (facet_L>>(i-1))&1==1
-                                facet_bin |= UInt16(1)<<(j-1)
+                for (index_contraction, perm) in iso_DB[m][l]
+                    @showprogress desc="Number of links $(length(pseudo_manifolds_DB[m-1][index_contraction]))" for L_bit in pseudo_manifolds_DB[m-1][index_contraction]
+                        mandatory_facets =Vector{UInt16}()
+                        # println(perm)
+                        for facet_L in mat_DB[m-1][index_contraction][findall(L_bit)] # gives the binary facets of L
+                            facet_bin = UInt16(0)
+                            for (i,j) in perm
+                                if (facet_L>>(i-1))&1==1
+                                    facet_bin |= UInt16(1)<<(j-1)
+                                end
                             end
+                            push!(mandatory_facets,copy(facet_bin))
                         end
-                        push!(mandatory_facets,copy(facet_bin))
-                    end
 
-                    # Testing
-                    if m==9
-                        facets_L = [[i for i=1:(8*sizeof(facet_bin)) if (facet_bin>>(i-1))&1==1] for facet_bin in mat_DB[m-1][index_contraction][findall(L)]]
-                        L = simplicial_complex(facets_L)
-                        for facets_M in list_links
-                            if is_isomorphic(L,simplicial_complex(facets_M))
-                                print("hello")
-                            end
-                        end
-                    end
-                    # println("facets:",[[i for i=1:(8*sizeof(facet)) if (facet>>(i-1))&1==1] for facet in mandatory_facets])
-                    # println("bases:",[[i for i=1:(8*sizeof(base)) if (base>>(i-1))&1==1] for base in bases])
-                    
+                        # println("facets:",[[i for i=1:(8*sizeof(facet)) if (facet>>(i-1))&1==1] for facet in mandatory_facets])
+                        # println("bases:",[[i for i=1:(8*sizeof(base)) if (base>>(i-1))&1==1] for base in bases])
+                        
 
-                    # println("facets:",mandatory_facets)
-                    # println("bases:",bases)
-                    sort!(mandatory_facets)
-                    mandatory_facets_bit = subset_bitvector(bases, mandatory_facets)
-                    if count(mandatory_facets_bit) != length(mandatory_facets)
-                        @warn "Some mandatory facets not found in bases!" m l count(mandatory_facets_bit) length(mandatory_facets)
-                        # Or throw an error if this should never happen:
-                        # error("Missing mandatory facets")
-                    end
-                    t1 = time()
-                    all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A,basis,mandatory_facets_bit)
-                    if (time() - t1)> 1
-                        println("Enum: ", time() - t1, " seconds")
-                    end
-                    if m<16
-                        for K_bit in all_solutions_bit
-                            facets_bin = [facet_bin for facet_bin in compl_bases[findall(K_bit)]]
-                            if euler_sphere_test(facets_bin)
-                                push!(pseudo_manifolds_DB[m][l],copy(K_bit))
-                            end
-                            # if is_mod2_sphere(facets_bin)
-                            #     push!(pseudo_manifolds_DB[m][l],K_bit)
-                            # end
+                        # println("facets:",mandatory_facets)
+                        # println("bases:",bases)
+                        # sort!(mandatory_facets)
+                        mandatory_facets_bit = subset_bitvector(bases, mandatory_facets)
+                        if count(mandatory_facets_bit) != length(mandatory_facets)
+                            @warn "Some mandatory facets not found in bases!" m l mandatory_facets
+                            # Or throw an error if this should never happen:
+                            # error("Missing mandatory facets")
                         end
-                    else
-                        union!(pseudo_manifolds_DB[m][l],copy(all_solutions_bit))
+                        t1 = time()
+                        all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A,basis,mandatory_facets_bit)
+                        if (time() - t1)> 1
+                            println("Enum: ", time() - t1, " seconds")
+                        end
+                        if m<16
+                            for K_bit in all_solutions_bit
+                                facets_bin = [facet_bin for facet_bin in compl_bases[findall(K_bit)]]
+                                if euler_sphere_test(facets_bin)
+                                    push!(pseudo_manifolds_DB[m][l],copy(K_bit))
+                                end
+                                # if is_mod2_sphere(facets_bin)
+                                #     push!(pseudo_manifolds_DB[m][l],K_bit)
+                                # end
+                            end
+                        end
                     end
                 end
             end
@@ -524,7 +515,7 @@ build_finalDB_single_v!(pseudo_manifolds_DB,mat_DB_bin,iso_DB,9;list_links=list_
 
 database_before_iso = Dict{Tuple{Int,Int}, Set{Vector{UInt16}}}()
 
-for m=6:8
+for m=6:9
     for (l,bases) in enumerate(mat_DB_bin[m])
         # display(bases)
         V = reduce(|,bases)
@@ -540,20 +531,20 @@ for m=6:8
         end
     end
 end
-for facets_M in list_link
-    for facets_bin in database_before_iso[(3,8)]
-        facets_L = [[i for i=1:(8*sizeof(facet_bin)) if (facet_bin>>(i-1))&1==1] for facet_bin in facets_bin]
-        L = simplicial_complex(facets_L)
-        if is_isomorphic(L,simplicial_complex(facets_M))
-            println("hello",facets_M)
-            break
-        end
-    end
-end
-            
-# open("rank4_db_before_iso_test10.jls", "w") do io
-#     serialize(io, database_before_iso)
+# for facets_M in list_link
+#     for facets_bin in database_before_iso[(3,8)]
+#         facets_L = [[i for i=1:(8*sizeof(facet_bin)) if (facet_bin>>(i-1))&1==1] for facet_bin in facets_bin]
+#         L = simplicial_complex(facets_L)
+#         if is_isomorphic(L,simplicial_complex(facets_M))
+#             println("hello",facets_M)
+#             break
+#         end
+#     end
 # end
+            
+open("rank4_db_before_iso_test12.jls", "w") do io
+    serialize(io, database_before_iso)
+end
 
 
 # open("Pic_4_DB_6-15_test7.jls", "w") do io

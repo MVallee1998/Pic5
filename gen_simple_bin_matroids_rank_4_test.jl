@@ -40,7 +40,9 @@ end
 
 pic = 4
 
-A = matrix(GF(2), all_nonzero_binary_vectors(pic))
+
+
+A = matrix(GF(2), [[1,1,0,0],[1,0,1,0],[0,1,1,0],[1,0,0,1],[0,1,0,1],[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
 M0 = matroid_from_matrix_rows(A)
 global S = Set{Matroid}()
 simple_bin_matroids = Dict{Int,Vector{Vector{Vector{UInt8}}}}()
@@ -70,7 +72,7 @@ end
 using Serialization
 
 # save
-open("rank_4_simple_bin_mat_DB_bin_test.jls", "w") do io
+open("rank_4_simple_bin_mat_DB_bin_test_ninja.jls", "w") do io
     serialize(io, simple_bin_matroids_bin)
 end
 
