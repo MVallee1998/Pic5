@@ -305,7 +305,7 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
     end
 
     T_fixed = falses(n)
-    for i in 1:m
+    for i in 1:m # THIS WORKS DO NOT CHANGE
         if row_sums[i] == 2
             for j in rows[i]
                 # if column j is not already forced to 1, mark it forbidden
@@ -412,13 +412,17 @@ iso_DB = open("rank_4_iso_DB_7-15_bin_test.jls", "r") do io
     deserialize(io)
 end
 
+list_link = open("list_link.jls", "r") do io
+    deserialize(io)
+end
+
 function subset_bitvector(superset::Vector{UInt16}, subset::Vector{UInt16})
     S = Set(subset)
     return BitVector(x in S for x in superset)
 end
 
 
-function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVector}}},mat_DB::Dict{Int,Vector{Vector{UInt16}}},iso_DB::Dict{Int,Dict{Int,Tuple{Int,Int,Any}}},mmax;mstart=-1)
+function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVector}}},mat_DB::Dict{Int,Vector{Vector{UInt16}}},iso_DB::Dict{Int,Dict{Int,Tuple{Int,Int,Any}}},mmax;mstart=-1,list_links=[])
     mmin = minimum(collect(keys(mat_DB)))
     if mstart == -1
         mstart = mmin
@@ -450,7 +454,7 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                 @showprogress desc="Number of links $(length(pseudo_manifolds_DB[m-1][index_contraction]))" for L in pseudo_manifolds_DB[m-1][index_contraction]
                     mandatory_facets =Vector{UInt16}()
                     # println(perm)
-                    for facet_L in mat_DB[m-1][index_contraction][findall(L)]
+                    for facet_L in mat_DB[m-1][index_contraction][findall(L)] # gives the binary facets of L
                         facet_bin = UInt16(0)
                         for (i,j) in perm
                             if (facet_L>>(i-1))&1==1
@@ -458,6 +462,17 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                             end
                         end
                         push!(mandatory_facets,copy(facet_bin))
+                    end
+
+                    # Testing
+                    if m==9
+                        facets_L = [[i for i=1:(8*sizeof(facet_bin)) if (facet_bin>>(i-1))&1==1] for facet_bin in mat_DB[m-1][index_contraction][findall(L)]]
+                        L = simplicial_complex(facets_L)
+                        for facets_M in list_links
+                            if is_isomorphic(L,simplicial_complex(facets_M))
+                                print("hello")
+                            end
+                        end
                     end
                     # println("facets:",[[i for i=1:(8*sizeof(facet)) if (facet>>(i-1))&1==1] for facet in mandatory_facets])
                     # println("bases:",[[i for i=1:(8*sizeof(base)) if (base>>(i-1))&1==1] for base in bases])
@@ -505,11 +520,11 @@ pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 #     deserialize(io)
 # end
 
-build_finalDB_single_v!(pseudo_manifolds_DB,mat_DB_bin,iso_DB,15)
+build_finalDB_single_v!(pseudo_manifolds_DB,mat_DB_bin,iso_DB,9;list_links=list_link)
 
 database_before_iso = Dict{Tuple{Int,Int}, Set{Vector{UInt16}}}()
 
-for m=6:15
+for m=6:8
     for (l,bases) in enumerate(mat_DB_bin[m])
         # display(bases)
         V = reduce(|,bases)
@@ -525,10 +540,20 @@ for m=6:15
         end
     end
 end
-            
-open("rank4_db_before_iso_test8.jls", "w") do io
-    serialize(io, database_before_iso)
+for facets_M in list_link
+    for facets_bin in database_before_iso[(3,8)]
+        facets_L = [[i for i=1:(8*sizeof(facet_bin)) if (facet_bin>>(i-1))&1==1] for facet_bin in facets_bin]
+        L = simplicial_complex(facets_L)
+        if is_isomorphic(L,simplicial_complex(facets_M))
+            println("hello",facets_M)
+            break
+        end
+    end
 end
+            
+# open("rank4_db_before_iso_test10.jls", "w") do io
+#     serialize(io, database_before_iso)
+# end
 
 
 # open("Pic_4_DB_6-15_test7.jls", "w") do io
