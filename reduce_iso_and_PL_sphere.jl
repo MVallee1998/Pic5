@@ -200,87 +200,11 @@ database_before_iso = open("rank4_db_before_iso_test13.jls", "r") do io
 end
 
 
-function canonical_form_tuple(facets::Vector{UInt16})
 
-    isempty(facets) && return ()
+# Make all functions work with both Vector and Tuple
+const Facets = Union{Vector{UInt16}, Tuple{Vararg{UInt16}}}
 
-    # compute vertex mask
-    verts_mask = reduce(|, facets)
-
-    verts = Int[]
-    for v in 0:15
-        if (verts_mask >> v) & 1 == 1
-            push!(verts, v)
-        end
-    end
-
-    k = length(verts)
-
-    # compress vertices to 0:k-1
-    relabel0 = Dict{Int,Int}()
-    for (i,v) in enumerate(verts)
-        relabel0[v] = i-1
-    end
-
-    compressed = UInt16[]
-    for f in facets
-        g = UInt16(0)
-        for v in verts
-            if (f >> v) & 1 == 1
-                g |= UInt16(1) << relabel0[v]
-            end
-        end
-        push!(compressed, g)
-    end
-
-    sort!(compressed)
-
-    best = nothing
-
-    perm = collect(0:k-1)
-
-    buffer = similar(compressed)
-
-    function apply_perm!()
-        for i in eachindex(compressed)
-            f = compressed[i]
-            g = UInt16(0)
-            for v in 0:k-1
-                if (f >> v) & 1 == 1
-                    g |= UInt16(1) << perm[v+1]
-                end
-            end
-            buffer[i] = g
-        end
-        sort!(buffer)
-        return Tuple(buffer)
-    end
-
-    function backtrack(i)
-        if i > k
-            cf = apply_perm!()
-            if best === nothing || cf < best
-                best = cf
-            end
-            return
-        end
-
-        for j in i:k
-            perm[i], perm[j] = perm[j], perm[i]
-            backtrack(i+1)
-            perm[i], perm[j] = perm[j], perm[i]
-        end
-    end
-
-    backtrack(1)
-
-    return best
-
-end
-
-
-
-@inline function link_facets(facets::Vector{UInt16}, v::UInt16)
+@inline function link_facets(facets::Facets, v::UInt16)
     mask = UInt16(1) << v
     out = UInt16[]
     for f in facets
@@ -291,23 +215,18 @@ end
     return out
 end
 
-@inline function link_without_vertex(facets::Vector{UInt16}, vmask::UInt16)
-    
+@inline function link_without_vertex(facets::Facets, vmask::UInt16)
     lk = UInt16[]
-    
     for f in facets
         if (f & vmask) != 0
             push!(lk, f & ~vmask)
         end
     end
-    
     sort!(lk)
     return lk
-    
 end
 
-
-@inline function vertex_mask(facets::Vector{UInt16})
+@inline function vertex_mask(facets::Facets)
     m = UInt16(0)
     for f in facets
         m |= f
@@ -316,10 +235,10 @@ end
 end
 
 @inline function vertices_from_mask(mask::UInt16)
-    out = Int[]
+    out = UInt16[]
     for i in 0:15
         if (mask >> i) & 1 == 1
-            push!(out, i)
+            push!(out, UInt16(i))
         end
     end
     return out
@@ -327,264 +246,221 @@ end
 
 @inline facet_dim(f::UInt16) = count_ones(f) - 1
 
-function is_seed_bit(facets::Vector{UInt16})
-
-    verts_mask = reduce(|, facets)
-
-    verts = UInt16[]
-    for v in 0:15
-        if (verts_mask >> v) & 1 == 1
-            push!(verts, UInt16(v))
-        end
-    end
-
-    # compute links
-    links = Dict{UInt16,Vector{UInt16}}()
-
+function is_seed_bit(facets::Facets)
+    verts_mask = vertex_mask(facets)
+    verts = vertices_from_mask(verts_mask)
+    
+    # Compute all links once
+    links = Dict{UInt16, Vector{UInt16}}()
     for v in verts
-        links[v] = link_facets(facets,v)
+        links[v] = link_facets(facets, v)
     end
-
-    # check pairs
+    
+    # Check all vertex pairs
     for i in 1:length(verts)-1
-
         v = verts[i]
         lk_v = links[v]
-
         mask_v = UInt16(1) << v
-
-
+        
         for j in i+1:length(verts)
-
             w = verts[j]
-
-            # FAST FACE CHECK:
-            # w ∈ lk(v) iff pair is a face
-            appears = false
             mask_w = UInt16(1) << w
-
-            for f in lk_v
-                if (f & mask_w) != 0
-                    appears = true
-                    break
-                end
-            end
-
+            
+            # Check if w appears in lk(v) - means (v,w) is a face
+            appears = any(f -> (f & mask_w) != 0, lk_v)
             appears || continue
-
-
+            
+            # Compute lk(w) with v and w swapped
             lk_w_relabel = UInt16[]
-
             for f in facets
                 if (f & mask_w) != 0
-                    
-                    g = f & ~mask_w   # remove w
-                    
-                    # swap v and w inside the link
-                    
-                    has_v = (g & mask_v) != 0
-                    
-                    if has_v
-                        g = (g & ~mask_v) | mask_w
+                    g = f & ~mask_w  # remove w
+                    if (g & mask_v) != 0  # if has v
+                        g = (g & ~mask_v) | mask_w  # swap v↔w
                     end
-                    
                     push!(lk_w_relabel, g)
                 end
             end
-
             sort!(lk_w_relabel)
-
+            
             if lk_v == lk_w_relabel
                 return false
             end
-
         end
     end
-
+    
     return true
 end
 
-function find_wedge_vertex(facets::Vector{UInt16})
-    
-    verts_mask = reduce(|, facets)
-    
-    verts = UInt16[]
-    for v in 0:15
-        if (verts_mask >> v) & 1 == 1
-            push!(verts, UInt16(v))
-        end
-    end
+function find_wedge_vertex(facets::Facets)
+    verts_mask = vertex_mask(facets)
+    verts = vertices_from_mask(verts_mask)
     
     for i in 1:length(verts)-1
-        
         v = verts[i]
         vmask = UInt16(1) << v
-        
         lk_v = link_without_vertex(facets, vmask)
         
         for j in i+1:length(verts)
-            
             w = verts[j]
             wmask = UInt16(1) << w
             
-            # face condition: must appear together in some facet
-            is_face = false
-            for f in facets
-                if (f & vmask != 0) && (f & wmask != 0)
-                    is_face = true
-                    break
-                end
-            end
-            
+            # Check if (v,w) is a face
+            is_face = any(f -> (f & vmask != 0) && (f & wmask != 0), facets)
             is_face || continue
             
             lk_w = link_without_vertex(facets, wmask)
             
-            # now remove the other vertex from both links
-            
-            lk_v2 = UInt16[]
-            for f in lk_v
-                push!(lk_v2, f & ~wmask)
-            end
-            
-            lk_w2 = UInt16[]
-            for f in lk_w
-                push!(lk_w2, f & ~vmask)
-            end
-            
-            sort!(lk_v2)
-            sort!(lk_w2)
+            # Remove the other vertex from both links
+            lk_v2 = sort!([f & ~wmask for f in lk_v])
+            lk_w2 = sort!([f & ~vmask for f in lk_w])
             
             if lk_v2 == lk_w2
                 return v
             end
-            
         end
     end
     
     return UInt16(0xffff)
-    
 end
 
-
-function find_seed_bit(facets::Vector{UInt16})
-    
-    current = copy(facets)
+function find_seed_bit(facets::Facets)
+    current = collect(facets)  # Convert to Vector for mutation
     
     while true
-        
         v = find_wedge_vertex(current)
-        
-        if v == UInt16(0xffff)
-            return current
-        end
-        
-        current = link_without_vertex(current, UInt16(1)<<v)
-        
+        v == UInt16(0xffff) && return current
+        current = link_without_vertex(current, UInt16(1) << v)
     end
-    
 end
 
+# Oscar conversion function
+function to_oscar_complex(facets::Facets)
+    Vmask = vertex_mask(facets)
+    verts = vertices_from_mask(Vmask)
+    
+    # Convert facets from bitmasks to vertex sets (1-indexed for Oscar)
+    facets_as_sets = Vector{Int}[]
+    for f in facets
+        facet_verts = Int[]
+        for v in verts
+            if (f >> v) & 1 == 1
+                push!(facet_verts, Int(v) + 1)  # Oscar uses 1-indexed vertices
+            end
+        end
+        push!(facets_as_sets, facet_verts)
+    end
+    
+    return simplicial_complex(facets_as_sets)
+end
+
+# Check if complex is isomorphic to any in the database
+function is_isomorphic_to_any(facets_bin::Facets, db)
+    K_oscar = to_oscar_complex(facets_bin)
+    
+    for existing_bin in db
+        existing_oscar = to_oscar_complex(existing_bin)
+        if Oscar.is_isomorphic(K_oscar, existing_oscar)
+            return true
+        end
+    end
+    
+    return false
+end
 
 
 function index_to_bin(facets::Vector{Vector{Int}})
     @assert max([max(f...) for f in facets]...)<=16
-    return canonical_form_tuple([reduce(|,[UInt16(1)<<(i-1) for i in facet]) for facet in facets])
+    return Tuple(sort([reduce(|,[UInt16(1)<<(i-1) for i in facet]) for facet in facets]))
 end
 
 
+# Keep original database structure - only bin format
 database_tc_PLS = Dict{Tuple{Int,Int}, Set{Tuple{Vararg{UInt16}}}}()
 database_tc_seed_PLS = Dict{Tuple{Int,Int}, Set{Tuple{Vararg{UInt16}}}}()
 
+# Initialize
 database_tc_PLS[(0,2)] = Set([(UInt16(1), UInt16(2))])
 database_tc_seed_PLS[(0,2)] = Set([(UInt16(1), UInt16(2))])
 
-database_tc_PLS[(3,8)] = Set{Tuple{Vararg{UInt16}}}([index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))])
-database_tc_PLS[(3,8)] = Set{Tuple{Vararg{UInt16}}}([index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))])
-database_tc_seed_PLS[(3,8)] = Set{Tuple{Vararg{UInt16}}}([index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))])
-database_tc_PLS[(2,6)] = Set{Tuple{Vararg{UInt16}}}([index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]))])
-database_tc_seed_PLS[(2,6)] = Set{Tuple{Vararg{UInt16}}}([index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]))])
+cube_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))
+database_tc_PLS[(3,8)] = Set([cube_facets])
+database_tc_seed_PLS[(3,8)] = Set([cube_facets])
 
-
-# database_tc_PLS = Dict{Tuple{Int,Int}, Set{Tuple{Vararg{UInt16}}}}()
-# database_tc_seed_PLS = Dict{Tuple{Int,Int}, Set{Tuple{Vararg{UInt16}}}}()
+oct_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]))
+database_tc_PLS[(2,6)] = Set([oct_facets])
+database_tc_seed_PLS[(2,6)] = Set([oct_facets])
 
 for m in 2:15
     for Pic in 1:4
-
         key_in = (m-Pic-1, m)
         haskey(database_before_iso, key_in) || continue
 
         @showprogress for facets_bin in database_before_iso[key_in]
-
-            # compute basic invariants
+            # Compute basic invariants
             Vmask = vertex_mask(facets_bin)
             nv_K = count_ones(Vmask)
             d = facet_dim(facets_bin[1])
-
             key = (d, nv_K)
 
             db = get!(database_tc_PLS, key, Set{Tuple{Vararg{UInt16}}}())
             db_seed = get!(database_tc_seed_PLS, key, Set{Tuple{Vararg{UInt16}}}())
 
-            # canonical form once
-            cfK = canonical_form_tuple(facets_bin)
+            # Check if isomorphic to any existing (using Oscar)
+            is_new = !is_isomorphic_to_any(facets_bin, db)
+            
+            !is_new && continue
 
-            cfK in db && continue
-
-            # vertex list once
+            # Vertex list
             verts = vertices_from_mask(Vmask)
 
-            # check links
+            # Check links
             all_links_ok = true
 
             for v in verts
-
                 Lk = find_seed_bit(link_facets(facets_bin, UInt16(v)))
                 isempty(Lk) && (all_links_ok = false; break)
 
                 Lmask = vertex_mask(Lk)
                 nv_Lk = count_ones(Lmask)
                 d_Lk = facet_dim(Lk[1])
-
                 key_L = (d_Lk, nv_Lk)
 
                 haskey(database_tc_PLS, key_L) || (all_links_ok = false; break)
 
-                cfL = canonical_form_tuple(Lk)
-
-                if !(cfL in database_tc_seed_PLS[key_L])
+                # Check link isomorphism using Oscar
+                if !is_isomorphic_to_any(Lk, database_tc_seed_PLS[key_L])
                     all_links_ok = false
                     break
                 end
-
             end
 
             all_links_ok || continue
 
-            # sphere test
+            # Sphere test
             is_mod2_sphere(facets_bin) || continue
 
-            # insert once
-            push!(db, cfK)
+            # Insert
+            push!(db, Tuple(facets_bin))
             if is_seed_bit(facets_bin)
-                push!(db_seed, cfK)
+                push!(db_seed, Tuple(facets_bin))
             end
-
+            
+            # Periodic garbage collection
+            if length(db) % 10 == 0
+                GC.gc()
+            end
         end
 
         key_out = (m-Pic-1, m)
 
         if haskey(database_tc_PLS, key_out)
-            println("PLS count Pic=$Pic m=$m: ",
-                length(database_tc_PLS[key_out]))
+            println("PLS count Pic=$Pic m=$m: ", length(database_tc_PLS[key_out]))
         end
 
         if haskey(database_tc_seed_PLS, key_out)
-            println("Seed count Pic=$Pic m=$m: ",
-                length(database_tc_seed_PLS[key_out]))
+            println("Seed count Pic=$Pic m=$m: ", length(database_tc_seed_PLS[key_out]))
         end
-
     end
 end
 
