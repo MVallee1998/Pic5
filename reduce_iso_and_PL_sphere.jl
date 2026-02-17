@@ -6,19 +6,18 @@ using Serialization
 using Base.Threads
 using LinearAlgebra
 using Nemo
-using Combinatorics
 
 const F2 = GF(2)
 
 
 function boundary_incidence_facets_to_ridges(facets::Vector{UInt16})
     # collect ridges (each facet contributes its (d-1)-subfaces by deleting one vertex)
-    ridge_dict = Dict{UInt16, Int}()  # ridge -> row index
+    ridge_dict = Dict{UInt16,Int}()  # ridge -> row index
     ridges = Vector{UInt16}()
     for f in facets
-        for i=0:((8*sizeof(f))-1)
-            if (f>>i)&1==1
-                r = f ⊻ (UInt16(1)<<i)
+        for i = 0:((8*sizeof(f))-1)
+            if (f >> i) & 1 == 1
+                r = f ⊻ (UInt16(1) << i)
                 if !haskey(ridge_dict, r)
                     push!(ridges, r)
                     ridge_dict[r] = length(ridges)
@@ -35,10 +34,10 @@ function boundary_incidence_facets_to_ridges(facets::Vector{UInt16})
     J = Int[]   # col indices
 
     for (j, f) in pairs(facets)
-        for i=0:(8*sizeof(f)-1)
-            if (f>>i)&1==1
-                r = f ⊻ (UInt16(1)<<i)
-                row_idx = ridge_dict[r]  
+        for i = 0:(8*sizeof(f)-1)
+            if (f >> i) & 1 == 1
+                r = f ⊻ (UInt16(1) << i)
+                row_idx = ridge_dict[r]
                 push!(I, row_idx)
                 push!(J, j)
             end
@@ -145,7 +144,7 @@ function is_seed(MNF::Vector{Set{Int}}, m::Int)
 end
 
 function find_wedge_pair(K::SimplicialComplex)
-    m=nv(K)
+    m = nv(K)
     MNF_sets = Set(minimal_nonfaces(K))
 
     # iterate over all pairs of vertices
@@ -173,27 +172,15 @@ function find_wedge_pair(K::SimplicialComplex)
 end
 
 function find_seed(K::SimplicialComplex)
-    v=find_wedge_pair(K)
+    v = find_wedge_pair(K)
     seed_K = K
-    while v!=-1
-        seed_K=link_subcomplex(seed_K,[v])
-        v=find_wedge_pair(seed_K)
+    while v != -1
+        seed_K = link_subcomplex(seed_K, [v])
+        v = find_wedge_pair(seed_K)
     end
     return seed_K
 end
 
-
-
-
-
-
-# mat_DB = open("rank_4_simple_bin_mat_DB_bin_test.jls", "r") do io
-#     deserialize(io)
-# end
-
-# iso_DB = open("rank_4_iso_DB_7-15_bin.jls", "r") do io
-#     deserialize(io)
-# end
 
 database_before_iso = open("rank4_db_before_iso_test13.jls", "r") do io
     deserialize(io)
@@ -202,7 +189,7 @@ end
 
 
 # Make all functions work with both Vector and Tuple
-const Facets = Union{Vector{UInt16}, Tuple{Vararg{UInt16}}}
+const Facets = Union{Vector{UInt16},Tuple{Vararg{UInt16}}}
 
 @inline function link_facets(facets::Facets, v::UInt16)
     mask = UInt16(1) << v
@@ -249,27 +236,27 @@ end
 function is_seed_bit(facets::Facets)
     verts_mask = vertex_mask(facets)
     verts = vertices_from_mask(verts_mask)
-    
+
     # Compute all links once
-    links = Dict{UInt16, Vector{UInt16}}()
+    links = Dict{UInt16,Vector{UInt16}}()
     for v in verts
         links[v] = link_facets(facets, v)
     end
-    
+
     # Check all vertex pairs
     for i in 1:length(verts)-1
         v = verts[i]
         lk_v = links[v]
         mask_v = UInt16(1) << v
-        
+
         for j in i+1:length(verts)
             w = verts[j]
             mask_w = UInt16(1) << w
-            
+
             # Check if w appears in lk(v) - means (v,w) is a face
             appears = any(f -> (f & mask_w) != 0, lk_v)
             appears || continue
-            
+
             # Compute lk(w) with v and w swapped
             lk_w_relabel = UInt16[]
             for f in facets
@@ -282,51 +269,51 @@ function is_seed_bit(facets::Facets)
                 end
             end
             sort!(lk_w_relabel)
-            
+
             if lk_v == lk_w_relabel
                 return false
             end
         end
     end
-    
+
     return true
 end
 
 function find_wedge_vertex(facets::Facets)
     verts_mask = vertex_mask(facets)
     verts = vertices_from_mask(verts_mask)
-    
+
     for i in 1:length(verts)-1
         v = verts[i]
         vmask = UInt16(1) << v
         lk_v = link_without_vertex(facets, vmask)
-        
+
         for j in i+1:length(verts)
             w = verts[j]
             wmask = UInt16(1) << w
-            
+
             # Check if (v,w) is a face
             is_face = any(f -> (f & vmask != 0) && (f & wmask != 0), facets)
             is_face || continue
-            
+
             lk_w = link_without_vertex(facets, wmask)
-            
+
             # Remove the other vertex from both links
             lk_v2 = sort!([f & ~wmask for f in lk_v])
             lk_w2 = sort!([f & ~vmask for f in lk_w])
-            
+
             if lk_v2 == lk_w2
                 return v
             end
         end
     end
-    
+
     return UInt16(0xffff)
 end
 
 function find_seed_bit(facets::Facets)
     current = collect(facets)  # Convert to Vector for mutation
-    
+
     while true
         v = find_wedge_vertex(current)
         v == UInt16(0xffff) && return current
@@ -338,7 +325,7 @@ end
 function to_oscar_complex(facets::Facets)
     Vmask = vertex_mask(facets)
     verts = vertices_from_mask(Vmask)
-    
+
     # Convert facets from bitmasks to vertex sets (1-indexed for Oscar)
     facets_as_sets = Vector{Int}[]
     for f in facets
@@ -350,50 +337,50 @@ function to_oscar_complex(facets::Facets)
         end
         push!(facets_as_sets, facet_verts)
     end
-    
+
     return simplicial_complex(facets_as_sets)
 end
 
 # Check if complex is isomorphic to any in the database
 function is_isomorphic_to_any(facets_bin::Facets, db)
     K_oscar = to_oscar_complex(facets_bin)
-    
+
     for existing_bin in db
         existing_oscar = to_oscar_complex(existing_bin)
         if Oscar.is_isomorphic(K_oscar, existing_oscar)
             return true
         end
     end
-    
+
     return false
 end
 
 
 function index_to_bin(facets::Vector{Vector{Int}})
-    @assert max([max(f...) for f in facets]...)<=16
-    return Tuple(sort([reduce(|,[UInt16(1)<<(i-1) for i in facet]) for facet in facets]))
+    @assert max([max(f...) for f in facets]...) <= 16
+    return Tuple(sort([reduce(|, [UInt16(1) << (i - 1) for i in facet]) for facet in facets]))
 end
 
 
 # Keep original database structure - only bin format
-database_tc_PLS = Dict{Tuple{Int,Int}, Set{Tuple{Vararg{UInt16}}}}()
-database_tc_seed_PLS = Dict{Tuple{Int,Int}, Set{Tuple{Vararg{UInt16}}}}()
+database_tc_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt16}}}}()
+database_tc_seed_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt16}}}}()
 
 # Initialize
-database_tc_PLS[(0,2)] = Set([(UInt16(1), UInt16(2))])
-database_tc_seed_PLS[(0,2)] = Set([(UInt16(1), UInt16(2))])
+database_tc_PLS[(0, 2)] = Set([(UInt16(1), UInt16(2))])
+database_tc_seed_PLS[(0, 2)] = Set([(UInt16(1), UInt16(2))])
 
 cube_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))
-database_tc_PLS[(3,8)] = Set([cube_facets])
-database_tc_seed_PLS[(3,8)] = Set([cube_facets])
+database_tc_PLS[(3, 8)] = Set([cube_facets])
+database_tc_seed_PLS[(3, 8)] = Set([cube_facets])
 
 oct_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]))
-database_tc_PLS[(2,6)] = Set([oct_facets])
-database_tc_seed_PLS[(2,6)] = Set([oct_facets])
+database_tc_PLS[(2, 6)] = Set([oct_facets])
+database_tc_seed_PLS[(2, 6)] = Set([oct_facets])
 
 for m in 2:15
     for Pic in 1:4
-        key_in = (m-Pic-1, m)
+        key_in = (m - Pic - 1, m)
         haskey(database_before_iso, key_in) || continue
 
         @showprogress for facets_bin in database_before_iso[key_in]
@@ -408,7 +395,7 @@ for m in 2:15
 
             # Check if isomorphic to any existing (using Oscar)
             is_new = !is_isomorphic_to_any(facets_bin, db)
-            
+
             !is_new && continue
 
             # Vertex list
@@ -445,14 +432,14 @@ for m in 2:15
             if is_seed_bit(facets_bin)
                 push!(db_seed, Tuple(facets_bin))
             end
-            
+
             # Periodic garbage collection
             if length(db) % 10 == 0
                 GC.gc()
             end
         end
 
-        key_out = (m-Pic-1, m)
+        key_out = (m - Pic - 1, m)
 
         if haskey(database_tc_PLS, key_out)
             println("PLS count Pic=$Pic m=$m: ", length(database_tc_PLS[key_out]))
@@ -463,125 +450,6 @@ for m in 2:15
         end
     end
 end
-
-
-# for m=2:15
-#     for Pic=1:4
-#         if !((m-Pic-1,m) in keys(database_before_iso))
-#             continue
-#         end
-#         @showprogress for facets_bin in database_before_iso[(m-Pic-1,m)]
-#             # facets_K = [[i for i=1:(8*sizeof(facet_bin)) if (facet_bin>>(i-1))&1==1] for facet_bin in facets_bin]
-#             # K = simplicial_complex(facets_K)
-#             V_bin = reduce(|,facets_bin)
-#             nv_K = count_ones(V_bin)
-#             d = count_ones(facets_bin[1])-1
-#             V = [i for i=0:15 if (V_bin>>i)&UInt16(1)==UInt16(1)]
-#             get!(database_tc_PLS, (d,nv_K), Set{Tuple{Vararg{UInt16}}}())
-#             get!(database_tc_seed_PLS, (d,nv_K), Set{Tuple{Vararg{UInt16}}}())
-
-#             is_isom=false
-#             can_form_K = canonical_form_tuple(facets_bin)
-#             if can_form_K in database_tc_PLS[(d,nv_K)]
-#                 continue
-#             else
-#                 # test if all the link are in the DB
-#                 all_link_isom=true
-
-#                 for v in V
-#                     Lk_v_bin = [facet_bin⊻(UInt16(1)>>v) for facet_bin in facets_bin if (facet_bin>>v)&UInt16(1)==UInt16(1)]
-#                     V_Lk_bin = reduce(|,Lk_v_bin)
-#                     nv_Lk = count_ones(V_Lk_bin)
-#                     d_Lk = count_ones(Lk_v_bin[1])-1
-#                     V_Lk = [i for i=0:15 if (V_Lk_bin>>i)&UInt16(1)==UInt16(1)]
-#                     if !((d_Lk,nv_Lk) in keys(database_tc_PLS))
-#                         all_link_isom=false
-#                         break
-#                     end
-#                     if !(canonical_form_tuple(Lk_v_bin) in database_tc_PLS[(d_Lk,nv_Lk)])
-#                         all_link_isom=false
-#                         break
-#                     end
-#                 end
-#                 if !all_link_isom 
-#                     continue
-#                 end
-#                 if is_mod2_sphere(facets_bin)
-#                     push!(database_tc_PLS[(d,nv_K)],can_form_K)
-                    
-#                     if is_seed(minimal_nonfaces(K),nv(K))
-#                         push!(database_tc_seed_PLS[(d,nv_K)],can_form_K)
-#                         # println("$(d),$(nv_K) ",minimal_nonfaces(K))
-#                     end
-#                 end
-#             end
-#         end
-#         println("number of PLS up to isom for Pic=$(Pic) and m=$(m): ",length(database_tc_PLS[(m-Pic-1,m)]))
-
-#         println("number of seeds up to isom for Pic=$(Pic) and m=$(m): ",length(database_tc_seed_PLS[(m-Pic-1,m)]))
-#     end
-# end
-
-# for m=6:10
-#     for (l,bases) in enumerate(mat_DB[m])
-#         # display(bases)
-#         V = reduce(|,bases)
-#         compl_bases = [base⊻V for base in bases]
-#         @showprogress for facets_bit in pseudo_manifolds_DB[m][l]
-#             facets_bin = compl_bases[findall(facets_bit)]
-#             facets_K = [[i for i=1:(8*sizeof(facet_bin)) if (facet_bin>>(i-1))&1==1] for facet_bin in facets_bin]
-#             K = simplicial_complex(facets_K)
-#             if !((d,nv_K) in keys(database_tc_PLS))
-#                 database_tc_PLS[(d,nv_K)] = Vector{Vector{Vector{Int}}}()
-#             end
-#             if !((d,nv_K) in keys(database_tc_seed_PLS))
-#                 database_tc_seed_PLS[(d,nv_K)] = Vector{Vector{Vector{Int}}}()
-#             end
-#             is_isom=false
-#             for facets_L in database_tc_PLS[(d,nv_K)]
-#                 if is_isomorphic(K,simplicial_complex(facets_L))
-#                     is_isom=true
-#                     break
-#                 end
-#             end
-#             if !is_isom
-#                 # test if all the link are in the DB
-#                 all_isom=true
-#                 for v=1:nv_K
-#                     Lk_v = find_seed(link_subcomplex(K,Set{Int}([v])))
-#                     if !((d_Lk,nv_Lk) in keys(database_tc_PLS))
-#                         all_isom=false
-#                         break
-#                     end
-#                     link_is_isom=false
-#                     for facets_M in database_tc_PLS[(d_Lk,nv_Lk)]
-#                         if is_isomorphic(Lk_v,simplicial_complex(facets_M))
-#                             link_is_isom=true
-#                             break
-#                         end
-#                     end
-#                     all_isom &= link_is_isom
-#                     if !all_isom
-#                         break
-#                     end
-#                 end
-#                 if !all_isom 
-#                     continue
-#                 end
-#                 if is_mod2_sphere(facets_bin)
-#                     push!(database_tc_PLS[(d,nv_K)],copy(facets_K))
-#                     if is_seed(minimal_nonfaces(K),nv(K))
-#                         push!(database_tc_seed_PLS[(d,nv_K)],copy(facets_K))
-#                         # println("$(d),$(nv_K) ",minimal_nonfaces(K))
-#                     end
-#                 end
-#             end
-#         end
-#     end
-#     println("number of PLS up to isom for m=$(m): ",length(database_tc_PLS[(m-5,m)]))
-
-#     println("number of seeds up to isom for m=$(m): ",length(database_tc_seed_PLS[(m-5,m)]))
-# end
 
 open("Pic_4_tc_PLS_test_13.jls", "w") do io
     serialize(io, database_tc_PLS)
