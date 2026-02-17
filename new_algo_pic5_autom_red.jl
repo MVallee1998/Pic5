@@ -286,11 +286,9 @@ end
     return true
 end
 
-
 function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int}, B::Vector{BitVector}, S::BitVector)
     m, n = size(A)
     rows = sparse_rows(A)
-
     results = BitVector[]
 
     if isempty(B)
@@ -301,23 +299,39 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         return results
     end
 
-    row_sums = zeros(Int, m)
-    for i in 1:m
-        for j in rows[i]
-            row_sums[i] += S[j]
-        end
-    end
+    S = copy(S)
+    T = falses(n)
 
-    T_fixed = falses(n)
-    for i in 1:m
-        if row_sums[i] == 2
+    # ── unit propagation ──────────────────────────────────────────────────
+    changed = true
+    while changed
+        changed = false
+        for i in 1:m
+            s = 0
+            free_cols = Int[]
             for j in rows[i]
-                S[j] || (T_fixed[j] = true)
+                if S[j];      s += 1
+                elseif !T[j]; push!(free_cols, j)
+                end
+            end
+            s > 2 && return results
+            if s == 2
+                for j in free_cols
+                    if !T[j]; T[j] = true; changed = true; end
+                end
+            elseif s == 1
+                isempty(free_cols) && return results
+                if length(free_cols) == 1
+                    if !S[free_cols[1]]; S[free_cols[1]] = true; changed = true; end
+                end
+            elseif s == 0 && length(free_cols) == 1
+                if !T[free_cols[1]]; T[free_cols[1]] = true; changed = true; end
             end
         end
     end
+    # ─────────────────────────────────────────────────────────────────────
 
-    B_ech, pivots = kernel_basis_echelon_prioritize_with_constraints(B, S, T_fixed)
+    B_ech, pivots = kernel_basis_echelon_prioritize_with_constraints(B, S, T)
     k = length(B_ech)
     @assert k <= 64
     @assert length(pivots) == k
@@ -330,7 +344,7 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         piv = pivots[i]
         if S[piv]
             forced_one[i] = true
-        elseif T_fixed[piv]
+        elseif T[piv]
             forced_zero[i] = true
         else
             push!(free_indices, i)
@@ -343,7 +357,7 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
     end
 
     for j in 1:n
-        ((S[j] && !y[j]) || (T_fixed[j] && y[j])) && return results
+        ((S[j] && !y[j]) || (T[j] && y[j])) && return results
     end
 
     num_free = length(free_indices)
@@ -362,7 +376,7 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
     end
 
     # initialise row_sums from forced y
-    fill!(row_sums, 0)
+    row_sums = zeros(Int, m)
     for r in 1:m
         for j in rows[r]; row_sums[r] += y[j]; end
     end
@@ -380,23 +394,17 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
     end
 
     sizehint!(results, min(1 << num_free, 1000))
-
-    # first candidate
     check_row_sums() && push!(results, copy(y))
 
     total = UInt64(1) << num_free
 
-    # Gray code enumeration with incremental row sum updates
     for i in UInt64(1):(total - UInt64(1))
         gray      = i ⊻ (i >> 1)
         gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
         fi = trailing_zeros(gray ⊻ gray_prev) + 1
         idx = free_indices[fi]
 
-        # flip y incrementally
         y .⊻= B_ech[idx]
-
-        # update row sums incrementally
         for (r, cols) in free_row_support[fi]
             for j in cols
                 row_sums[r] += y[j] ? 1 : -1
@@ -586,6 +594,7 @@ mmax=10
 
 build_finalDB_single_v!(pseudo_manifolds_DB,database_reduce_autom,mat_DB_bin,iso_DB,mmax)
 
+database_before_iso = Dict{Tuple{Int,Int}, Set{Vector{UInt32}}}()
 
 
 for m=7:mmax
