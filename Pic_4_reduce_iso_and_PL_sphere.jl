@@ -357,7 +357,7 @@ function index_to_bin(facets::Vector{Vector{Int}})
 end
 
 
-database_before_iso = open("rank_4_db_before_iso.jls", "r") do io
+database_before_iso = open("rank_4_db_before_iso_new.jls", "r") do io
     deserialize(io)
 end
 
@@ -381,7 +381,7 @@ oct_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]
 database_tc_seed_PLS[(2, 6)] = Set([oct_facets])
 
 
-for m in 2:15
+for m in 2:13
     for Pic in 1:4
         key_in = (m - Pic - 1, m)
         haskey(database_before_iso, key_in) || continue
@@ -433,6 +433,6 @@ end
 #     serialize(io, database_tc_PLS)
 # end
 
-open("Pic_4_tc_seed_PLS.jls", "w") do io
+open("Pic_4_tc_seed_PLS_new.jls", "w") do io
     serialize(io, database_tc_seed_PLS)
 end
