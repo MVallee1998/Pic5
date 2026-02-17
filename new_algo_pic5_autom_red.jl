@@ -49,69 +49,6 @@ function boundary_incidence_facets_to_ridges(facets::Vector{UInt32})
     return ridges, A
 end
 
-function mod2_rank_nemo(A::SparseMatrixCSC)
-    m, n = size(A)
-    if m == 0 || n == 0
-        return 0
-    end
-
-    M = zero_matrix(F2, m, n)
-
-    # Fill matrix directly from sparse structure
-    for col in 1:n
-        for idx in A.colptr[col]:(A.colptr[col+1]-1)
-            row = A.rowval[idx]
-            M[row, col] = F2(1)
-        end
-    end
-
-    return rank(M)
-end
-
-function is_mod2_sphere(top_facets::Vector{UInt32})
-
-    isempty(top_facets) && return true
-
-    d = count_ones(top_facets[1]) - 1
-
-    current_faces = top_facets
-
-    # ---- Step 1: Top homology β_d ----
-    # β_d = (#d-faces - rank ∂_d)
-    ridges, B = boundary_incidence_facets_to_ridges(current_faces)
-    rank_prev = mod2_rank_nemo(B)
-
-    n_d = length(current_faces)
-    β_d = n_d - rank_prev
-    β_d == 1 || return false
-
-    current_faces = ridges
-
-    # ---- Step 2: Middle dimensions ----
-    # For i = d-1 down to 1:
-    for dim = d-1:-1:1
-
-        ridges, B = boundary_incidence_facets_to_ridges(current_faces)
-        rank_curr = mod2_rank_nemo(B)
-
-        n_i = length(current_faces)
-
-        # β_i = (#i-faces - rank ∂_i) - rank ∂_{i+1}
-        β_i = (n_i - rank_curr) - rank_prev
-        β_i == 0 || return false
-
-        rank_prev = rank_curr
-        current_faces = ridges
-    end
-
-    # ---- Step 3: β_0 ----
-    # β_0 = (#vertices) - rank ∂_1
-    n_0 = length(current_faces)
-    β_0 = n_0 - rank_prev
-    β_0 == 1 || return false
-
-    return true
-end
 
 function euler_characteristic_sphere(top_facets::Vector{UInt32})
     isempty(top_facets) && return 0
@@ -356,7 +293,6 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
 
     results = BitVector[]
 
-    # Special case: no basis (only zero vector possible)
     if isempty(B)
         y = falses(n)
         if all(.!S) && check_Ay_is_02(rows, y)
@@ -365,36 +301,28 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         return results
     end
 
-    # 1) Propagate: any row with sum == 2 forbids all other columns that touch that row
     row_sums = zeros(Int, m)
     for i in 1:m
-        s = 0
         for j in rows[i]
-            s += S[j]
+            row_sums[i] += S[j]
         end
-        row_sums[i] = s
     end
 
     T_fixed = falses(n)
-    for i in 1:m # THIS WORKS DO NOT CHANGE
+    for i in 1:m
         if row_sums[i] == 2
             for j in rows[i]
-                # if column j is not already forced to 1, mark it forbidden
-                if !S[j]
-                    T_fixed[j] = true
-                end
+                S[j] || (T_fixed[j] = true)
             end
         end
     end
 
-    # 2) Compute echelon prioritizing S then T_fixed (final constraints for this single propagation)
     B_ech, pivots = kernel_basis_echelon_prioritize_with_constraints(B, S, T_fixed)
-    k = length(B_ech)   # now k == rank
-    @assert k <= 64     # assert on rank (or choose a different bound / strategy)
+    k = length(B_ech)
+    @assert k <= 64
     @assert length(pivots) == k
 
-
-    forced_one = falses(k)
+    forced_one  = falses(k)
     forced_zero = falses(k)
     free_indices = Int[]
 
@@ -409,63 +337,75 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         end
     end
 
-    # x_bits encodes coefficients
-    x_bits = UInt64(0)
-
-    # y = Bx (mod 2)
     y = falses(n)
-
-    # Apply forced ones to y
     for i in 1:k
-        if forced_one[i]
-            x_bits |= UInt64(1) << (i-1)
-            y .⊻= B_ech[i]
-        end
+        forced_one[i] && (y .⊻= B_ech[i])
     end
 
-    # Check immediate consistency with constraints S / T_fixed
     for j in 1:n
-        if (S[j] && !y[j]) || (T_fixed[j] && y[j])
-            return results
-        end
+        ((S[j] && !y[j]) || (T_fixed[j] && y[j])) && return results
     end
 
     num_free = length(free_indices)
 
-    if num_free == 0
-        if check_Ay_is_02(rows, y)
-            push!(results, copy(y))
+    # precompute per-free-variable row support
+    free_row_support = Vector{Vector{Tuple{Int,Vector{Int}}}}(undef, num_free)
+    for fi in 1:num_free
+        bv = B_ech[free_indices[fi]]
+        support = Tuple{Int,Vector{Int}}[]
+        for r in 1:m
+            cols = Int[]
+            for j in rows[r]; bv[j] && push!(cols, j); end
+            isempty(cols) || push!(support, (r, cols))
         end
+        free_row_support[fi] = support
+    end
+
+    # initialise row_sums from forced y
+    fill!(row_sums, 0)
+    for r in 1:m
+        for j in rows[r]; row_sums[r] += y[j]; end
+    end
+
+    @inline function check_row_sums()
+        @inbounds for s in row_sums
+            (s == 0 || s == 2) || return false
+        end
+        return true
+    end
+
+    if num_free == 0
+        check_row_sums() && push!(results, copy(y))
         return results
     end
 
     sizehint!(results, min(1 << num_free, 1000))
 
     # first candidate
-    if check_Ay_is_02(rows, y)
-        push!(results, copy(y))
-    end
+    check_row_sums() && push!(results, copy(y))
 
     total = UInt64(1) << num_free
 
-    # Gray code enumeration over free coefficients
+    # Gray code enumeration with incremental row sum updates
     for i in UInt64(1):(total - UInt64(1))
         gray      = i ⊻ (i >> 1)
         gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
-        changed   = trailing_zeros(gray ⊻ gray_prev) + 1
+        fi = trailing_zeros(gray ⊻ gray_prev) + 1
+        idx = free_indices[fi]
 
-        idx = free_indices[changed]
-
-        # flip coefficient bit
-        x_bits ⊻= UInt64(1) << (idx - 1)
-
-        # update y incrementally
+        # flip y incrementally
         y .⊻= B_ech[idx]
 
-        if check_Ay_is_02(rows, y)
-            push!(results, copy(y))
+        # update row sums incrementally
+        for (r, cols) in free_row_support[fi]
+            for j in cols
+                row_sums[r] += y[j] ? 1 : -1
+            end
         end
+
+        check_row_sums() && push!(results, copy(y))
     end
+
     return results
 end
 
@@ -598,31 +538,36 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
             push!(pseudo_manifolds_DB[m], Set{BitVector}())
             push!(database_reduce_autom[m], Set{BitVector}())
 
-            # store unreduced for link iteration, reduced for output
+            lk = ReentrantLock()
+
             function try_insert!(K_bit::BitVector)
                 facets_bin = compl_bases_bin[findall(K_bit)]
-                if euler_sphere_test(facets_bin) && is_mod2_sphere(facets_bin)
-                    push!(pseudo_manifolds_DB[m][l], copy(K_bit))
-                    push!(database_reduce_autom[m][l], canonical_rep(K_bit))
+                if euler_sphere_test(facets_bin)
+                    canon = canonical_rep(K_bit)
+                    lock(lk) do
+                        push!(pseudo_manifolds_DB[m][l], copy(K_bit))
+                        push!(database_reduce_autom[m][l], canon)
+                    end
                 end
             end
 
             if m == mmin
                 mandatory_facets_bit = falses(length(bases_bin))
                 all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A, kernel_basis, mandatory_facets_bit)
-                for K_bit in all_solutions_bit
+                Threads.@threads for K_bit in collect(all_solutions_bit)
                     try_insert!(K_bit)
                 end
             else
                 for (index_contraction, perm) in iso_DB[m][l]
-                    @showprogress desc="Number of links $(length(pseudo_manifolds_DB[m-1][index_contraction]))" for L_bit in pseudo_manifolds_DB[m-1][index_contraction]
+                    links = collect(pseudo_manifolds_DB[m-1][index_contraction])
+                    @showprogress desc="Number of links $(length(links))" for L_bit in links
                         mandatory_facets_bin = relabel(mat_DB[m-1][index_contraction][findall(L_bit)], perm)
                         mandatory_facets_bit = subset_bitvector(bases_bin, mandatory_facets_bin)
                         if count(mandatory_facets_bit) != length(mandatory_facets_bin)
                             @warn "Some mandatory facets not found in bases!" m l mandatory_facets_bin
                         end
                         all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A, kernel_basis, mandatory_facets_bit)
-                        for K_bit in all_solutions_bit
+                        Threads.@threads for K_bit in collect(all_solutions_bit)
                             try_insert!(K_bit)
                         end
                     end
@@ -641,9 +586,6 @@ mmax=10
 
 build_finalDB_single_v!(pseudo_manifolds_DB,database_reduce_autom,mat_DB_bin,iso_DB,mmax)
 
-
-
-database_reduce_autom = Dict{Int,Vector{Set{BitVector}}}()
 
 
 for m=7:mmax
