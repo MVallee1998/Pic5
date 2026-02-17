@@ -10,14 +10,14 @@ using Polymake
 const F2 = GF(2)
 
 
-function boundary_incidence_facets_to_ridges(facets::Vector{UInt16})
+function boundary_incidence_facets_to_ridges(facets::Vector{UInt32})
     # collect ridges (each facet contributes its (d-1)-subfaces by deleting one vertex)
-    ridge_dict = Dict{UInt16, Int}()  # ridge -> row index
-    ridges = Vector{UInt16}()
+    ridge_dict = Dict{UInt32, Int}()  # ridge -> row index
+    ridges = Vector{UInt32}()
     for f in facets
         for i=0:((8*sizeof(f))-1)
             if (f>>i)&1==1
-                r = f ⊻ (UInt16(1)<<i)
+                r = f ⊻ (UInt32(1)<<i)
                 if !haskey(ridge_dict, r)
                     push!(ridges, r)
                     ridge_dict[r] = length(ridges)
@@ -36,7 +36,7 @@ function boundary_incidence_facets_to_ridges(facets::Vector{UInt16})
     for (j, f) in pairs(facets)
         for i=0:(8*sizeof(f)-1)
             if (f>>i)&1==1
-                r = f ⊻ (UInt16(1)<<i)
+                r = f ⊻ (UInt32(1)<<i)
                 row_idx = ridge_dict[r]  
                 push!(I, row_idx)
                 push!(J, j)
@@ -49,13 +49,13 @@ function boundary_incidence_facets_to_ridges(facets::Vector{UInt16})
     return ridges, A
 end
 
-function euler_characteristic_sphere(top_facets::Vector{UInt16})
+function euler_characteristic_sphere(top_facets::Vector{UInt32})
     isempty(top_facets) && return 0
 
     d = count_ones(top_facets[1]) - 1
 
     # faces_by_dim[i] will store i-faces
-    faces_by_dim = Vector{Set{UInt16}}(undef, d+1)
+    faces_by_dim = Vector{Set{UInt32}}(undef, d+1)
 
     # Top dimension
     faces_by_dim[d+1] = Set(top_facets)
@@ -63,13 +63,13 @@ function euler_characteristic_sphere(top_facets::Vector{UInt16})
     # Generate all lower-dimensional faces
     for dim = d:-1:1
         current_faces = faces_by_dim[dim+1]
-        lower_faces = Set{UInt16}()
+        lower_faces = Set{UInt32}()
 
         for f in current_faces
             x = f
             while x != 0
                 i = trailing_zeros(x)
-                push!(lower_faces, f ⊻ (UInt16(1) << i))
+                push!(lower_faces, f ⊻ (UInt32(1) << i))
                 x &= x - 1
             end
         end
@@ -86,7 +86,7 @@ function euler_characteristic_sphere(top_facets::Vector{UInt16})
     return χ
 end
 
-function euler_sphere_test(top_facets::Vector{UInt16})
+function euler_sphere_test(top_facets::Vector{UInt32})
     isempty(top_facets) && return false
     d = count_ones(top_facets[1]) - 1
     χ = euler_characteristic_sphere(top_facets)
@@ -405,13 +405,13 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
     return results
 end
 
-function relabel(facets_bin::Vector{UInt16},perm)
-    rel_facets_bin = Vector{UInt16}()
+function relabel(facets_bin::Vector{UInt32},perm)
+    rel_facets_bin = Vector{UInt32}()
     for facet_bin in facets_bin
-        rel_facet_bin = UInt16(0)
+        rel_facet_bin = UInt32(0)
         for (i,j) in perm
             if (facet_bin>>(i-1))&1==1
-                rel_facet_bin |= UInt16(1)<<(j-1)
+                rel_facet_bin |= UInt32(1)<<(j-1)
             end
         end
         push!(rel_facets_bin,copy(rel_facet_bin))
@@ -421,22 +421,22 @@ end
 
 
 
-mat_DB_bin = open("rank_4_mat_DB_bin.jls", "r") do io
+mat_DB_bin = open("rank_5_mat_DB_bin.jls", "r") do io
     deserialize(io)
 end
 
-iso_DB = open("rank_4_iso_DB_bin.jls", "r") do io
+iso_DB = open("rank_5_iso_DB_bin.jls", "r") do io
     deserialize(io)
 end
 
 
-function subset_bitvector(superset::Vector{UInt16}, subset::Vector{UInt16})
+function subset_bitvector(superset::Vector{UInt32}, subset::Vector{UInt32})
     S = Set(subset)
     return BitVector(x in S for x in superset)
 end
 
 
-function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVector}}},mat_DB::Dict{Int,Vector{Vector{UInt16}}},iso_DB::Dict{Int,Dict{Int,Vector{Tuple{Int,Any}}}},mmax;mstart=-1)
+function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVector}}},mat_DB::Dict{Int,Vector{Vector{UInt32}}},iso_DB::Dict{Int,Dict{Int,Vector{Tuple{Int,Any}}}},mmax;mstart=-1,list_links=[])
     mmin = minimum(collect(keys(mat_DB)))
     if mstart == -1
         mstart = mmin
@@ -486,7 +486,7 @@ pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 
 
 
-mmax=15
+mmax=9
 
 
 build_finalDB_single_v!(pseudo_manifolds_DB,mat_DB_bin,iso_DB,mmax)
@@ -496,7 +496,7 @@ build_finalDB_single_v!(pseudo_manifolds_DB,mat_DB_bin,iso_DB,mmax)
 database_reduce_autom = Dict{Int,Vector{Set{BitVector}}}()
 
 
-for m = 6:mmax
+for m = 7:mmax
     database_reduce_autom[m] = Vector{Set{BitVector}}()
 
     for (l,bases) in enumerate(mat_DB_bin[m])
@@ -516,12 +516,12 @@ for m = 6:mmax
 
         faces_list = collect(facets(M))
 
-        facets_internal = Vector{UInt16}(undef, length(faces_list))
+        facets_internal = Vector{UInt32}(undef, length(faces_list))
 
         for j in eachindex(faces_list)
-            mask = UInt16(0)
+            mask = UInt32(0)
             for v in faces_list[j]      # v is already 1..n internally
-                mask |= UInt16(1) << (v - 1)
+                mask |= UInt32(1) << (v - 1)
             end
             facets_internal[j] = mask
         end
@@ -533,12 +533,12 @@ for m = 6:mmax
         all_autos = collect(elements(G))
 
         # inline helper to permute a single facet-mask using a vertex permutation g
-        @inline function permute_facet(mask::UInt16, g)
-            h = UInt16(0)
+        @inline function permute_facet(mask::UInt32, g)
+            h = UInt32(0)
             x = mask
             while x != 0
                 v = trailing_zeros(x) + 1
-                h |= UInt16(1) << (g(v) - 1)
+                h |= UInt32(1) << (g(v) - 1)
                 x &= x - 1
             end
             return h
@@ -600,9 +600,9 @@ end
 
 
 
-database_before_iso = Dict{Tuple{Int,Int}, Set{Vector{UInt16}}}()
+database_before_iso = Dict{Tuple{Int,Int}, Set{Vector{UInt32}}}()
 
-for m=6:mmax
+for m=7:mmax
     for (l,bases) in enumerate(mat_DB_bin[m])
         # display(bases)
         V = reduce(|,bases)
@@ -612,16 +612,29 @@ for m=6:mmax
             nv_K = count_ones(reduce(|,facets_bin))
             d_K = count_ones(facets_bin[1])-1
             if !((d_K,nv_K) in keys(database_before_iso))
-                database_before_iso[(d_K,nv_K)] = Set{Vector{UInt16}}()
+                database_before_iso[(d_K,nv_K)] = Set{Vector{UInt32}}()
             end
             push!(database_before_iso[(d_K,nv_K)],copy(sort(facets_bin)))
         end
     end
 end
-
+# for facets_M in list_link
+#     for facets_bin in database_before_iso[(3,8)]
+#         facets_L = [[i for i=1:(8*sizeof(facet_bin)) if (facet_bin>>(i-1))&1==1] for facet_bin in facets_bin]
+#         L = simplicial_complex(facets_L)
+#         if is_isomorphic(L,simplicial_complex(facets_M))
+#             println("hello",facets_M)
+#             break
+#         end
+#     end
+# end
             
-open("rank_4_db_before_iso.jls", "w") do io
+open("rank_5_db_before_iso_7-9.jls", "w") do io
     serialize(io, database_before_iso)
 end
 
+
+# open("Pic_4_DB_6-15_test7.jls", "w") do io
+#     serialize(io, pseudo_manifolds_DB)
+# end
 

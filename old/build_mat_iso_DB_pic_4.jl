@@ -9,7 +9,6 @@ using ProgressMeter
 using Nemo
 F = GF(2)
 
-
 # Build canonical vertex list present in a matroid (sorted)
 function vertex_list_of_bases(bases::Vector{Vector{UInt8}})
     s = Set{UInt8}()
@@ -190,7 +189,7 @@ function build_iso_db!(Iso_DB::Dict{Int,Dict{Int,Vector{Tuple{Int,Any}}}}, mat_D
 end
 
 
-mat_DB = open("rank_4_simple_bin_mat_DB_bin_test.jls", "r") do io
+mat_DB = open("rank_4_mat_DB_bin.jls", "r") do io
     deserialize(io)
 end
 
@@ -199,6 +198,6 @@ iso_DB = Dict{Int,Dict{Int,Vector{Tuple{Int,Any}}}}()
 build_iso_db!(iso_DB,mat_DB,ms=6:15,verbose=true)
 
 
-open("rank_4_iso_DB_7-15_bin_test.jls", "w") do io
+open("rank_4_iso_DB_bin.jls", "w") do io
     serialize(io, iso_DB)
 end

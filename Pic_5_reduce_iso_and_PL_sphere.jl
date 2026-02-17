@@ -10,14 +10,14 @@ using Nemo
 const F2 = GF(2)
 
 
-function boundary_incidence_facets_to_ridges(facets::Vector{UInt16})
+function boundary_incidence_facets_to_ridges(facets::Vector{UInt32})
     # collect ridges (each facet contributes its (d-1)-subfaces by deleting one vertex)
-    ridge_dict = Dict{UInt16,Int}()  # ridge -> row index
-    ridges = Vector{UInt16}()
+    ridge_dict = Dict{UInt32,Int}()  # ridge -> row index
+    ridges = Vector{UInt32}()
     for f in facets
         for i = 0:((8*sizeof(f))-1)
             if (f >> i) & 1 == 1
-                r = f ⊻ (UInt16(1) << i)
+                r = f ⊻ (UInt32(1) << i)
                 if !haskey(ridge_dict, r)
                     push!(ridges, r)
                     ridge_dict[r] = length(ridges)
@@ -36,7 +36,7 @@ function boundary_incidence_facets_to_ridges(facets::Vector{UInt16})
     for (j, f) in pairs(facets)
         for i = 0:(8*sizeof(f)-1)
             if (f >> i) & 1 == 1
-                r = f ⊻ (UInt16(1) << i)
+                r = f ⊻ (UInt32(1) << i)
                 row_idx = ridge_dict[r]
                 push!(I, row_idx)
                 push!(J, j)
@@ -69,7 +69,7 @@ function mod2_rank_nemo(A::SparseMatrixCSC)
 end
 
 
-function is_mod2_sphere(top_facets::Vector{UInt16})
+function is_mod2_sphere(top_facets::Vector{UInt32})
 
     isempty(top_facets) && return true
 
@@ -182,18 +182,13 @@ function find_seed(K::SimplicialComplex)
 end
 
 
-database_before_iso = open("rank4_db_before_iso_test13.jls", "r") do io
-    deserialize(io)
-end
-
-
 
 # Make all functions work with both Vector and Tuple
-const Facets = Union{Vector{UInt16},Tuple{Vararg{UInt16}}}
+const Facets = Union{Vector{UInt32},Tuple{Vararg{UInt32}}}
 
-@inline function link_facets(facets::Facets, v::UInt16)
-    mask = UInt16(1) << v
-    out = UInt16[]
+@inline function link_facets(facets::Facets, v::UInt32)
+    mask = UInt32(1) << v
+    out = UInt32[]
     for f in facets
         if (f & mask) != 0
             push!(out, f ⊻ mask)
@@ -202,8 +197,8 @@ const Facets = Union{Vector{UInt16},Tuple{Vararg{UInt16}}}
     return out
 end
 
-@inline function link_without_vertex(facets::Facets, vmask::UInt16)
-    lk = UInt16[]
+@inline function link_without_vertex(facets::Facets, vmask::UInt32)
+    lk = UInt32[]
     for f in facets
         if (f & vmask) != 0
             push!(lk, f & ~vmask)
@@ -214,31 +209,31 @@ end
 end
 
 @inline function vertex_mask(facets::Facets)
-    m = UInt16(0)
+    m = UInt32(0)
     for f in facets
         m |= f
     end
     return m
 end
 
-@inline function vertices_from_mask(mask::UInt16)
-    out = UInt16[]
-    for i in 0:15
+@inline function vertices_from_mask(mask::UInt32)
+    out = UInt32[]
+    for i in 0:31
         if (mask >> i) & 1 == 1
-            push!(out, UInt16(i))
+            push!(out, UInt32(i))
         end
     end
     return out
 end
 
-@inline facet_dim(f::UInt16) = count_ones(f) - 1
+@inline facet_dim(f::UInt32) = count_ones(f) - 1
 
 function is_seed_bit(facets::Facets)
     verts_mask = vertex_mask(facets)
     verts = vertices_from_mask(verts_mask)
 
     # Compute all links once
-    links = Dict{UInt16,Vector{UInt16}}()
+    links = Dict{UInt32,Vector{UInt32}}()
     for v in verts
         links[v] = link_facets(facets, v)
     end
@@ -247,18 +242,18 @@ function is_seed_bit(facets::Facets)
     for i in 1:length(verts)-1
         v = verts[i]
         lk_v = links[v]
-        mask_v = UInt16(1) << v
+        mask_v = UInt32(1) << v
 
         for j in i+1:length(verts)
             w = verts[j]
-            mask_w = UInt16(1) << w
+            mask_w = UInt32(1) << w
 
             # Check if w appears in lk(v) - means (v,w) is a face
             appears = any(f -> (f & mask_w) != 0, lk_v)
             appears || continue
 
             # Compute lk(w) with v and w swapped
-            lk_w_relabel = UInt16[]
+            lk_w_relabel = UInt32[]
             for f in facets
                 if (f & mask_w) != 0
                     g = f & ~mask_w  # remove w
@@ -285,12 +280,12 @@ function find_wedge_vertex(facets::Facets)
 
     for i in 1:length(verts)-1
         v = verts[i]
-        vmask = UInt16(1) << v
+        vmask = UInt32(1) << v
         lk_v = link_without_vertex(facets, vmask)
 
         for j in i+1:length(verts)
             w = verts[j]
-            wmask = UInt16(1) << w
+            wmask = UInt32(1) << w
 
             # Check if (v,w) is a face
             is_face = any(f -> (f & vmask != 0) && (f & wmask != 0), facets)
@@ -308,7 +303,7 @@ function find_wedge_vertex(facets::Facets)
         end
     end
 
-    return UInt16(0xffff)
+    return UInt32(0xffffffff)
 end
 
 function find_seed_bit(facets::Facets)
@@ -316,8 +311,8 @@ function find_seed_bit(facets::Facets)
 
     while true
         v = find_wedge_vertex(current)
-        v == UInt16(0xffff) && return current
-        current = link_without_vertex(current, UInt16(1) << v)
+        v == UInt32(0xffffffff) && return current
+        current = link_without_vertex(current, UInt32(1) << v)
     end
 end
 
@@ -357,55 +352,55 @@ end
 
 
 function index_to_bin(facets::Vector{Vector{Int}})
-    @assert max([max(f...) for f in facets]...) <= 16
-    return Tuple(sort([reduce(|, [UInt16(1) << (i - 1) for i in facet]) for facet in facets]))
+    @assert max([max(f...) for f in facets]...) <= 32
+    return Tuple(sort([reduce(|, [UInt32(1) << (i - 1) for i in facet]) for facet in facets]))
+end
+
+
+database_before_iso = open("rank5_db_before_iso.jls", "r") do io
+    deserialize(io)
 end
 
 
 # Keep original database structure - only bin format
-database_tc_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt16}}}}()
-database_tc_seed_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt16}}}}()
+# database_tc_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt32}}}}()
+database_tc_seed_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt32}}}}()
 
 # Initialize
-database_tc_PLS[(0, 2)] = Set([(UInt16(1), UInt16(2))])
-database_tc_seed_PLS[(0, 2)] = Set([(UInt16(1), UInt16(2))])
+# database_tc_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
+database_tc_seed_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
 
 cube_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))
-database_tc_PLS[(3, 8)] = Set([cube_facets])
+# database_tc_PLS[(3, 8)] = Set([cube_facets])
 database_tc_seed_PLS[(3, 8)] = Set([cube_facets])
 
 oct_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]))
-database_tc_PLS[(2, 6)] = Set([oct_facets])
+# database_tc_PLS[(2, 6)] = Set([oct_facets])
 database_tc_seed_PLS[(2, 6)] = Set([oct_facets])
 
-for m in 2:15
-    for Pic in 1:4
+for m in 2:12
+    for Pic in 1:5
         key_in = (m - Pic - 1, m)
         haskey(database_before_iso, key_in) || continue
 
         @showprogress for facets_bin in database_before_iso[key_in]
-            # Compute basic invariants
+            is_seed_bit(facets_bin) || continue
+            is_mod2_sphere(facets_bin) || continue
+
             Vmask = vertex_mask(facets_bin)
             nv_K = count_ones(Vmask)
             d = facet_dim(facets_bin[1])
             key = (d, nv_K)
 
-            db = get!(database_tc_PLS, key, Set{Tuple{Vararg{UInt16}}}())
-            db_seed = get!(database_tc_seed_PLS, key, Set{Tuple{Vararg{UInt16}}}())
+            db_seed = get!(database_tc_seed_PLS, key, Set{Tuple{Vararg{UInt32}}}())
 
-            # Check if isomorphic to any existing (using Oscar)
-            is_new = !is_isomorphic_to_any(facets_bin, db)
+            is_isomorphic_to_any(facets_bin, db_seed) && continue
 
-            !is_new && continue
-
-            # Vertex list
             verts = vertices_from_mask(Vmask)
-
-            # Check links
             all_links_ok = true
 
             for v in verts
-                Lk = find_seed_bit(link_facets(facets_bin, UInt16(v)))
+                Lk = find_seed_bit(link_facets(facets_bin, v))
                 isempty(Lk) && (all_links_ok = false; break)
 
                 Lmask = vertex_mask(Lk)
@@ -413,48 +408,29 @@ for m in 2:15
                 d_Lk = facet_dim(Lk[1])
                 key_L = (d_Lk, nv_Lk)
 
-                haskey(database_tc_PLS, key_L) || (all_links_ok = false; break)
-
-                # Check link isomorphism using Oscar
-                if !is_isomorphic_to_any(Lk, database_tc_seed_PLS[key_L])
-                    all_links_ok = false
-                    break
-                end
+                # was haskey(database_tc_PLS, key_L) - but we no longer populate that
+                haskey(database_tc_seed_PLS, key_L) || (all_links_ok = false; break)
+                # (d_Lk>0 && is_mod2_sphere(Lk)) || (all_links_ok = false; break)
+                is_isomorphic_to_any(Lk, database_tc_seed_PLS[key_L]) || (all_links_ok = false; break)
             end
 
             all_links_ok || continue
 
-            # Sphere test
-            is_mod2_sphere(facets_bin) || continue
-
-            # Insert
-            push!(db, Tuple(facets_bin))
-            if is_seed_bit(facets_bin)
-                push!(db_seed, Tuple(facets_bin))
-            end
-
-            # Periodic garbage collection
-            if length(db) % 10 == 0
-                GC.gc()
-            end
+            push!(db_seed, Tuple(facets_bin))
         end
 
         key_out = (m - Pic - 1, m)
-
-        if haskey(database_tc_PLS, key_out)
-            println("PLS count Pic=$Pic m=$m: ", length(database_tc_PLS[key_out]))
-        end
-
-        if haskey(database_tc_seed_PLS, key_out)
+        if haskey(database_tc_seed_PLS, key_out) && Pic==5
             println("Seed count Pic=$Pic m=$m: ", length(database_tc_seed_PLS[key_out]))
         end
     end
 end
 
-open("Pic_4_tc_PLS_test_13.jls", "w") do io
-    serialize(io, database_tc_PLS)
-end
 
-open("Pic_4_tc_seed_PLS_test_13.jls", "w") do io
+# open("Pic_4_tc_PLS.jls", "w") do io
+#     serialize(io, database_tc_PLS)
+# end
+
+open("Pic_5_tc_seed_PLS.jls", "w") do io
     serialize(io, database_tc_seed_PLS)
 end
