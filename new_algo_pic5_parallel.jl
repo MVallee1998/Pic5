@@ -336,28 +336,25 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
     @assert k <= 64
     @assert length(pivots) == k
 
-    forced_one  = falses(k)
-    forced_zero = falses(k)
+    forced_one   = falses(k)
     free_indices = Int[]
 
     for i in 1:k
         piv = pivots[i]
         if S[piv]
             forced_one[i] = true
-        elseif T[piv]
-            forced_zero[i] = true
-        else
+        elseif !T[piv]
             push!(free_indices, i)
         end
     end
 
-    y = falses(n)
+    y_base = falses(n)
     for i in 1:k
-        forced_one[i] && (y .⊻= B_ech[i])
+        forced_one[i] && (y_base .⊻= B_ech[i])
     end
 
     for j in 1:n
-        ((S[j] && !y[j]) || (T[j] && y[j])) && return results
+        ((S[j] && !y_base[j]) || (T[j] && y_base[j])) && return results
     end
 
     num_free = length(free_indices)
@@ -375,43 +372,96 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         free_row_support[fi] = support
     end
 
-    # initialise row_sums from forced y
-    row_sums = zeros(Int, m)
-    for r in 1:m
-        for j in rows[r]; row_sums[r] += y[j]; end
-    end
-
-    @inline function check_row_sums()
-        @inbounds for s in row_sums
-            (s == 0 || s == 2) || return false
-        end
-        return true
-    end
-
     if num_free == 0
-        check_row_sums() && push!(results, copy(y))
+        rs = zeros(Int, m)
+        for r in 1:m; for j in rows[r]; rs[r] += y_base[j]; end; end
+        all(s -> s == 0 || s == 2, rs) && push!(results, copy(y_base))
         return results
     end
 
-    sizehint!(results, min(1 << num_free, 1000))
-    check_row_sums() && push!(results, copy(y))
+    # ── prefix split for parallelism ─────────────────────────────────────
+    nthreads   = Threads.nthreads()
+    p          = nthreads == 1 ? 0 : min(num_free, ceil(Int, log2(nthreads)) + 1)
+    num_tasks  = 1 << p
+    num_serial = num_free - p
 
-    total = UInt64(1) << num_free
+    serial_indices  = free_indices[p+1:end]
+    serial_supports = free_row_support[p+1:end]
 
-    for i in UInt64(1):(total - UInt64(1))
-        gray      = i ⊻ (i >> 1)
-        gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
-        fi = trailing_zeros(gray ⊻ gray_prev) + 1
-        idx = free_indices[fi]
+    # precompute seed y and row_sums for each task
+    y_seeds       = Vector{BitVector}(undef, num_tasks)
+    rowsums_seeds = Vector{Vector{Int}}(undef, num_tasks)
 
-        y .⊻= B_ech[idx]
-        for (r, cols) in free_row_support[fi]
-            for j in cols
-                row_sums[r] += y[j] ? 1 : -1
+    for t in 1:num_tasks
+        y = copy(y_base)
+        for fi in 1:p
+            if ((t-1) >> (fi-1)) & 1 == 1
+                y .⊻= B_ech[free_indices[fi]]
             end
         end
+        rs = zeros(Int, m)
+        for r in 1:m; for j in rows[r]; rs[r] += y[j]; end; end
+        y_seeds[t]       = y
+        rowsums_seeds[t] = rs
+    end
 
-        check_row_sums() && push!(results, copy(y))
+    thread_results = [BitVector[] for _ in 1:num_tasks]
+
+    Threads.@threads for t in 1:num_tasks
+        let y               = copy(y_seeds[t]),
+            row_sums        = copy(rowsums_seeds[t]),
+            local_results   = thread_results[t],
+            serial_indices  = serial_indices,
+            serial_supports = serial_supports,
+            B_ech           = B_ech,
+            num_serial      = num_serial,
+            m               = m
+
+            sizehint!(local_results, 32)
+
+            solution_grays = UInt64[]
+
+            # check initial state
+            ok = true
+            for s in row_sums; if s != 0 && s != 2; ok = false; break; end; end
+            ok && push!(solution_grays, UInt64(0))
+
+            if num_serial > 0
+                total = UInt64(1) << num_serial
+                for i in UInt64(1):(total - UInt64(1))
+                    gray      = i ⊻ (i >> 1)
+                    gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
+                    fi  = trailing_zeros(gray ⊻ gray_prev) + 1
+                    idx = serial_indices[fi]
+
+                    y .⊻= B_ech[idx]
+                    for (r, cols) in serial_supports[fi]
+                        for j in cols
+                            row_sums[r] += y[j] ? 1 : -1
+                        end
+                    end
+
+                    ok = true
+                    for s in row_sums; if s != 0 && s != 2; ok = false; break; end; end
+                    ok && push!(solution_grays, gray)
+                end
+            end
+
+            # reconstruct y for each solution from its Gray code index
+            for g in solution_grays
+                y_sol = copy(y_seeds[t])
+                for fi in 1:num_serial
+                    if (g >> (fi-1)) & 1 == 1
+                        y_sol .⊻= B_ech[serial_indices[fi]]
+                    end
+                end
+                push!(local_results, y_sol)
+            end
+        end
+    end
+
+    for local_results in thread_results
+        append!(results, local_results)
     end
 
     return results
@@ -589,7 +639,7 @@ pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 database_reduce_autom = Dict{Int,Vector{Set{BitVector}}}()
 
 
-mmax=10
+mmax=9
 
 
 build_finalDB_single_v!(pseudo_manifolds_DB,database_reduce_autom,mat_DB_bin,iso_DB,mmax)
@@ -624,7 +674,7 @@ end
 #     end
 # end
             
-open("rank_5_db_before_iso_7-10.jls", "w") do io
+open("rank_5_db_before_iso_7-9.jls", "w") do io
     serialize(io, database_before_iso)
 end
 
