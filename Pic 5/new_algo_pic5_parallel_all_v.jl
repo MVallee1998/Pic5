@@ -607,13 +607,19 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                     try_insert!(K_bit)
                 end
             else
-                (index_contraction,perm) = iso_DB[m][l][1]
-                # Try to chose the best link: the one having the fewest elements
-                for (index_contraction_cand, perm_cand) in iso_DB[m][l]
-                    if length(pseudo_manifolds_DB[m-1][index_contraction])<length(pseudo_manifolds_DB[m-1][best_index])
-                        (index_contraction,perm) = (index_contraction_cand, perm_cand)
+                # Pick the contraction with fewest links
+                best_index = 1
+                min_count = length(pseudo_manifolds_DB[m-1][iso_DB[m][l][1][1]])
+                
+                for i in 2:length(iso_DB[m][l])
+                    count = length(pseudo_manifolds_DB[m-1][iso_DB[m][l][i][1]])
+                    if count < min_count
+                        min_count = count
+                        best_index = i
                     end
                 end
+                
+                (index_contraction, perm) = iso_DB[m][l][best_index]
                 links = collect(pseudo_manifolds_DB[m-1][index_contraction])
                 @showprogress desc="Number of links $(length(links))" for L_bit in links
                     mandatory_facets_bin = relabel(mat_DB[m-1][index_contraction][findall(L_bit)], perm)
@@ -679,7 +685,7 @@ end
 #     end
 # end
             
-open("rank_5_db_before_iso_7-9.jls", "w") do io
+open("rank_5_db_before_iso_7-10.jls", "w") do io
     serialize(io, database_before_iso)
 end
 
