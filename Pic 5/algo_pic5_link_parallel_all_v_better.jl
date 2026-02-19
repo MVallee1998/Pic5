@@ -7,6 +7,9 @@ using LinearAlgebra
 using Nemo
 using Polymake
 
+
+### This version uses parallel computing at the links, and find a best link (using only the size of the precedent pseudo_mfd_DB)
+
 const F2 = GF(2)
 
 
@@ -286,17 +289,19 @@ end
     return true
 end
 
-function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int}, B::Vector{BitVector}, S::BitVector)
+# Part 1: Setup and determine num_free (cheap, just preprocessing)
+function prepare_kernel_enumeration(A::SparseMatrixCSC{Bool,Int}, B::Vector{BitVector}, S::BitVector)
     m, n = size(A)
     rows = sparse_rows(A)
-    results = BitVector[]
 
     if isempty(B)
         y = falses(n)
         if all(.!S) && check_Ay_is_02(rows, y)
-            push!(results, copy(y))
+            # Return special tuple indicating single solution with num_free=0
+            return (nothing, nothing, Int[], y, rows, Vector{Vector{Tuple{Int,Vector{Int}}}}[], 0, true)  # added flag
+        else
+            return nothing  # infeasible
         end
-        return results
     end
 
     S = copy(S)
@@ -314,13 +319,13 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
                 elseif !T[j]; push!(free_cols, j)
                 end
             end
-            s > 2 && return results
+            s > 2 && return nothing
             if s == 2
                 for j in free_cols
                     if !T[j]; T[j] = true; changed = true; end
                 end
             elseif s == 1
-                isempty(free_cols) && return results
+                isempty(free_cols) && return nothing
                 if length(free_cols) == 1
                     if !S[free_cols[1]]; S[free_cols[1]] = true; changed = true; end
                 end
@@ -348,13 +353,13 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         end
     end
 
-    y_base = falses(n)
+    y = falses(n)
     for i in 1:k
-        forced_one[i] && (y_base .⊻= B_ech[i])
+        forced_one[i] && (y .⊻= B_ech[i])
     end
 
     for j in 1:n
-        ((S[j] && !y_base[j]) || (T[j] && y_base[j])) && return results
+        ((S[j] && !y[j]) || (T[j] && y[j])) && return nothing
     end
 
     num_free = length(free_indices)
@@ -372,99 +377,65 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
         free_row_support[fi] = support
     end
 
-    if num_free == 0
+    return (B_ech, pivots, free_indices, y, rows, free_row_support, num_free, false)  # added flag
+end
+
+# Part 2: Gray code enumeration (expensive)
+function enumerate_from_prepared(prep_result)
+    (B_ech, pivots, free_indices, y_forced, rows, free_row_support, num_free, is_empty_basis) = prep_result
+    
+    results = BitVector[]
+    m = length(rows)
+    n = length(y_forced)
+
+    if is_empty_basis || num_free == 0
         rs = zeros(Int, m)
-        for r in 1:m; for j in rows[r]; rs[r] += y_base[j]; end; end
-        all(s -> s == 0 || s == 2, rs) && push!(results, copy(y_base))
+        for r in 1:m; for j in rows[r]; rs[r] += y_forced[j]; end; end
+        all(s -> s == 0 || s == 2, rs) && push!(results, copy(y_forced))
         return results
     end
 
-    # ── prefix split for parallelism ─────────────────────────────────────
-    nthreads   = Threads.nthreads()
-    p          = nthreads == 1 ? 0 : min(num_free, ceil(Int, log2(nthreads)) + 1)
-    num_tasks  = 1 << p
-    num_serial = num_free - p
+    y = copy(y_forced)
+    row_sums = zeros(Int, m)
+    for r in 1:m; for j in rows[r]; row_sums[r] += y[j]; end; end
 
-    serial_indices  = free_indices[p+1:end]
-    serial_supports = free_row_support[p+1:end]
-
-    # precompute seed y and row_sums for each task
-    y_seeds       = Vector{BitVector}(undef, num_tasks)
-    rowsums_seeds = Vector{Vector{Int}}(undef, num_tasks)
-
-    for t in 1:num_tasks
-        y = copy(y_base)
-        for fi in 1:p
-            if ((t-1) >> (fi-1)) & 1 == 1
-                y .⊻= B_ech[free_indices[fi]]
-            end
+    @inline function check_row_sums()
+        @inbounds for s in row_sums
+            (s == 0 || s == 2) || return false
         end
-        rs = zeros(Int, m)
-        for r in 1:m; for j in rows[r]; rs[r] += y[j]; end; end
-        y_seeds[t]       = y
-        rowsums_seeds[t] = rs
+        return true
     end
 
-    thread_results = [BitVector[] for _ in 1:num_tasks]
+    sizehint!(results, min(1 << num_free, 1000))
+    check_row_sums() && push!(results, copy(y))
 
-    Threads.@threads for t in 1:num_tasks
-        let y               = copy(y_seeds[t]),
-            row_sums        = copy(rowsums_seeds[t]),
-            local_results   = thread_results[t],
-            serial_indices  = serial_indices,
-            serial_supports = serial_supports,
-            B_ech           = B_ech,
-            num_serial      = num_serial,
-            m               = m
+    total = UInt64(1) << num_free
 
-            sizehint!(local_results, 32)
+    for i in UInt64(1):(total - UInt64(1))
+        gray      = i ⊻ (i >> 1)
+        gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
+        fi = trailing_zeros(gray ⊻ gray_prev) + 1
+        idx = free_indices[fi]
 
-            solution_grays = UInt64[]
-
-            # check initial state
-            ok = true
-            for s in row_sums; if s != 0 && s != 2; ok = false; break; end; end
-            ok && push!(solution_grays, UInt64(0))
-
-            if num_serial > 0
-                total = UInt64(1) << num_serial
-                for i in UInt64(1):(total - UInt64(1))
-                    gray      = i ⊻ (i >> 1)
-                    gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
-                    fi  = trailing_zeros(gray ⊻ gray_prev) + 1
-                    idx = serial_indices[fi]
-
-                    y .⊻= B_ech[idx]
-                    for (r, cols) in serial_supports[fi]
-                        for j in cols
-                            row_sums[r] += y[j] ? 1 : -1
-                        end
-                    end
-
-                    ok = true
-                    for s in row_sums; if s != 0 && s != 2; ok = false; break; end; end
-                    ok && push!(solution_grays, gray)
-                end
-            end
-
-            # reconstruct y for each solution from its Gray code index
-            for g in solution_grays
-                y_sol = copy(y_seeds[t])
-                for fi in 1:num_serial
-                    if (g >> (fi-1)) & 1 == 1
-                        y_sol .⊻= B_ech[serial_indices[fi]]
-                    end
-                end
-                push!(local_results, y_sol)
+        y .⊻= B_ech[idx]
+        for (r, cols) in free_row_support[fi]
+            for j in cols
+                row_sums[r] += y[j] ? 1 : -1
             end
         end
-    end
 
-    for local_results in thread_results
-        append!(results, local_results)
+        check_row_sums() && push!(results, copy(y))
     end
 
     return results
+end
+
+# Wrapper that calls both (for backward compatibility)
+function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int}, B::Vector{BitVector}, S::BitVector)
+    prep = prepare_kernel_enumeration(A, B, S)
+    prep === nothing && return BitVector[]
+    
+    return enumerate_from_prepared(prep)
 end
 
 function relabel(facets_bin::Vector{UInt32},perm)
@@ -481,15 +452,6 @@ function relabel(facets_bin::Vector{UInt32},perm)
     return rel_facets_bin
 end
 
-
-
-mat_DB_bin = open("rank_5_mat_DB_bin.jls", "r") do io
-    deserialize(io)
-end
-
-iso_DB = open("rank_5_iso_DB_bin.jls", "r") do io
-    deserialize(io)
-end
 
 
 function subset_bitvector(superset::Vector{UInt32}, subset::Vector{UInt32})
@@ -596,37 +558,127 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
             push!(pseudo_manifolds_DB[m], Set{BitVector}())
             push!(database_reduce_autom[m], Set{BitVector}())
 
-            lk = ReentrantLock()
-
-            function try_insert!(K_bit::BitVector)
-                facets_bin = compl_bases_bin[findall(K_bit)]
-                if euler_sphere_test(facets_bin)
-                    canon = canonical_rep(K_bit)
-                    lock(lk) do
-                        push!(pseudo_manifolds_DB[m][l], copy(K_bit))
-                        push!(database_reduce_autom[m][l], canon)
-                    end
-                end
-            end
-
             if m == mmin
                 mandatory_facets_bit = falses(length(bases_bin))
                 all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A, kernel_basis, mandatory_facets_bit)
-                Threads.@threads for K_bit in collect(all_solutions_bit)
-                    try_insert!(K_bit)
+                for K_bit in all_solutions_bit
+                    facets_bin = compl_bases_bin[findall(K_bit)]
+                    if euler_sphere_test(facets_bin)
+                        push!(pseudo_manifolds_DB[m][l], copy(K_bit))
+                        nv = count_ones(reduce(|, facets_bin))
+                        if nv == m
+                            push!(database_reduce_autom[m][l], canonical_rep(K_bit))
+                        else
+                            push!(database_reduce_autom[m][l], copy(K_bit))
+                        end
+                    end
                 end
             else
-                for (index_contraction, perm) in iso_DB[m][l]
-                    links = collect(pseudo_manifolds_DB[m-1][index_contraction])
-                    @showprogress desc="Number of links $(length(links))" for L_bit in links
+                # Compute canonical complexity representation with carrying
+                function compute_complexity_signature(num_free_list::Vector{Int})
+                    counts = Dict{Int,Int}()
+                    for nf in num_free_list
+                        counts[nf] = get(counts, nf, 0) + 1
+                    end
+                    
+                    changed = true
+                    while changed
+                        changed = false
+                        for k in sort(collect(keys(counts)))
+                            if counts[k] >= 2
+                                carry = counts[k] ÷ 2
+                                counts[k] = counts[k] % 2
+                                counts[k+1] = get(counts, k+1, 0) + carry
+                                changed = true
+                            end
+                        end
+                    end
+                    
+                    powers = sort(collect(keys(counts)), rev=true)
+                    return tuple([(p, counts[p]) for p in powers if counts[p] > 0]...)
+                end
+
+                # Group by index_contraction to avoid redundant work
+                contraction_map = Dict{Int, Vector{Tuple{Int, Any}}}()
+                for (i, (idx, perm)) in enumerate(iso_DB[m][l])
+                    if !haskey(contraction_map, idx)
+                        contraction_map[idx] = []
+                    end
+                    push!(contraction_map[idx], (i, perm))
+                end
+
+                # Evaluate complexity for each UNIQUE index_contraction
+                best_index_contraction = nothing
+                best_signature = nothing
+
+                for (index_contraction_cand, pairs) in contraction_map
+                    num_free_list = Int[]
+                    
+                    for L_bit in pseudo_manifolds_DB[m-1][index_contraction_cand]
+                        perm = pairs[1][2]
+                        mandatory_facets_bin = relabel(mat_DB[m-1][index_contraction_cand][findall(L_bit)], perm)
+                        mandatory_facets_bit = subset_bitvector(bases_bin, mandatory_facets_bin)
+                        
+                        prep = prepare_kernel_enumeration(A, kernel_basis, mandatory_facets_bit)
+                        if prep !== nothing
+                            push!(num_free_list, prep[7])
+                        end
+                    end
+                    
+                    signature = compute_complexity_signature(num_free_list)
+                    
+                    if best_signature === nothing || signature < best_signature
+                        best_signature = signature
+                        best_index_contraction = index_contraction_cand
+                    end
+                end
+
+                # Pick any (index_contraction, perm) pair with the best index_contraction
+                index_contraction = best_index_contraction
+                perm = nothing
+                for (idx, p) in iso_DB[m][l]
+                    if idx == best_index_contraction
+                        perm = p
+                        break
+                    end
+                end
+
+                links = collect(pseudo_manifolds_DB[m-1][index_contraction])
+                lk = ReentrantLock()
+                
+                @showprogress desc="Number of links $(length(links))" Threads.@threads for L_bit in links
+                    let L_bit = L_bit,
+                        mat_DB = mat_DB,
+                        m = m,
+                        index_contraction = index_contraction,
+                        perm = perm,
+                        bases_bin = bases_bin,
+                        compl_bases_bin = compl_bases_bin,
+                        A = A,
+                        kernel_basis = kernel_basis,
+                        lk = lk,
+                        l = l
+                        
                         mandatory_facets_bin = relabel(mat_DB[m-1][index_contraction][findall(L_bit)], perm)
                         mandatory_facets_bit = subset_bitvector(bases_bin, mandatory_facets_bin)
+                        
                         if count(mandatory_facets_bit) != length(mandatory_facets_bin)
-                            @warn "Some mandatory facets not found in bases!" m l mandatory_facets_bin
+                            lock(lk) do
+                                @warn "Some mandatory facets not found in bases!" m l mandatory_facets_bin
+                            end
                         end
+                        
                         all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A, kernel_basis, mandatory_facets_bit)
-                        Threads.@threads for K_bit in collect(all_solutions_bit)
-                            try_insert!(K_bit)
+                        
+                        for K_bit in all_solutions_bit
+                            facets_bin = compl_bases_bin[findall(K_bit)]
+                            if euler_sphere_test(facets_bin)
+                                canon = canonical_rep(K_bit)
+                                lock(lk) do
+                                    push!(pseudo_manifolds_DB[m][l], copy(K_bit))
+                                    push!(database_reduce_autom[m][l], canon)
+                                end
+                            end
                         end
                     end
                 end
@@ -635,11 +687,19 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
     end
 end
 
+
+mat_DB_bin = open("rank_5_mat_DB_bin.jls", "r") do io
+    deserialize(io)
+end
+
+iso_DB = open("rank_5_iso_DB_bin_all_v.jls", "r") do io
+    deserialize(io)
+end
+
 pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 database_reduce_autom = Dict{Int,Vector{Set{BitVector}}}()
 
-
-mmax=9
+mmax=10
 
 
 build_finalDB_single_v!(pseudo_manifolds_DB,database_reduce_autom,mat_DB_bin,iso_DB,mmax)
@@ -674,7 +734,7 @@ end
 #     end
 # end
             
-open("rank_5_db_before_iso_7-9.jls", "w") do io
+open("rank_5_db_before_iso_7-10.jls", "w") do io
     serialize(io, database_before_iso)
 end
 
