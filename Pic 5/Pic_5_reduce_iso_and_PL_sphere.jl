@@ -350,6 +350,57 @@ function is_isomorphic_to_any(facets_bin::Facets, db)
     return false
 end
 
+# --------------------------------------- test bucket
+
+# ── Cheap isomorphism invariant (all computed from bitmasks, no Oscar) ────────
+function complex_invariant(facets::Facets)
+    # Facet size multiset: e.g. [3,3,3,4] — fast and discriminating
+    facet_sizes = sort!([count_ones(f) for f in facets])
+
+    # Vertex degree sequence: sorted number of facets each vertex appears in
+    Vmask = vertex_mask(facets)
+    verts = vertices_from_mask(Vmask)
+    degrees = sort!([count(f -> (f >> v) & 1 == 1, facets) for v in verts])
+
+    return (facet_sizes, degrees)
+end
+
+# ── Indexed database: invariant → list of complexes ───────────────────────────
+# Replaces a flat Set with a Dict of small buckets.
+# Oscar is only called within the same bucket (typically size 1).
+
+function build_index(db_seed)
+    idx = Dict{Tuple{Vector{Int},Vector{Int}}, Vector{Tuple{Vararg{UInt32}}}}()
+    for facets_bin in db_seed
+        inv = complex_invariant(facets_bin)
+        push!(get!(idx, inv, []), facets_bin)
+    end
+    return idx
+end
+
+function is_isomorphic_to_any_indexed(facets_bin::Facets, idx)
+    inv = complex_invariant(facets_bin)
+    bucket = get(idx, inv, nothing)
+    isnothing(bucket) && return false          # invariant not seen → definitely new
+    K = to_oscar_complex(facets_bin)
+    for existing in bucket                     # bucket is usually size 0 or 1
+        Oscar.is_isomorphic(K, to_oscar_complex(existing)) && return true
+    end
+    return false
+end
+
+function push_indexed!(db_seed, idx, facets_bin)
+    tup = Tuple(facets_bin)
+    push!(db_seed, tup)
+    inv = complex_invariant(facets_bin)
+    push!(get!(idx, inv, []), tup)
+end
+
+# -------------------------------- test bucket
+
+
+
+
 
 function index_to_bin(facets::Vector{Vector{Int}})
     @assert max([max(f...) for f in facets]...) <= 32
@@ -364,57 +415,90 @@ end
 
 # Keep original database structure - only bin format
 # database_tc_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt32}}}}()
-database_tc_seed_PLS_16 = open("Pic_4_tc_PLS_6-13.jls", "r") do io
-    deserialize(io)
-end
+# database_tc_seed_PLS = open("Pic_5_tc_PLS_7-9.jls", "r") do io
+#     deserialize(io)
+# end
 
 database_tc_seed_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt32}}}}()
 
-for m in 2:9
-    for Pic in 1:4
+# database_tc_seed_PLS = open("Pic_4_tc_PLS_7-9.jls", "r") do io
+#     deserialize(io)
+# end
+
+for m in 2:13
+    for Pic in 1:5
         key = (m - Pic - 1, m)
-        haskey(database_tc_seed_PLS_16, key) || continue
+        haskey(database_tc_seed_PLS, key) || continue
         database_tc_seed_PLS[key] = Set{Tuple{Vararg{UInt32}}}(
             Tuple(UInt32(f) for f in facets_bin)
-            for facets_bin in database_tc_seed_PLS_16[key]
+            for facets_bin in database_tc_seed_PLS[key]
         )
     end
 end
 
-# # Initialize
-# # database_tc_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
-# database_tc_seed_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
+# Initialize
+# database_tc_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
+database_tc_seed_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
 
-# cube_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))
-# # database_tc_PLS[(3, 8)] = Set([cube_facets])
-# database_tc_seed_PLS[(3, 8)] = Set([cube_facets])
+cube_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))
+# database_tc_PLS[(3, 8)] = Set([cube_facets])
+database_tc_seed_PLS[(3, 8)] = Set([cube_facets])
 
-# oct_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]))
-# # database_tc_PLS[(2, 6)] = Set([oct_facets])
-# database_tc_seed_PLS[(2, 6)] = Set([oct_facets])
+oct_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]))
+# database_tc_PLS[(2, 6)] = Set([oct_facets])
+database_tc_seed_PLS[(2, 6)] = Set([oct_facets])
 
-for m in 2:9
-    for Pic in 5:5
+for m in 3:9
+    for Pic in 1:5
         key_in = (m - Pic - 1, m)
         haskey(database_before_iso, key_in) || continue
-        prog = Progress(length(database_before_iso[key_in]))
 
-        for facets_bin in database_before_iso[key_in]
-            n_seeds = haskey(database_tc_seed_PLS, key_in) ? length(database_tc_seed_PLS[key_in]) : 0
-            next!(prog; showvalues = [(:seeds, n_seeds), (:Pic, 5), (:m, m)])
+        items = collect(database_before_iso[key_in])
+        prog  = Progress(length(items))
 
-            is_seed_bit(facets_bin) || continue
+        db_seed = get!(database_tc_seed_PLS, key_in, Set{Tuple{Vararg{UInt32}}}())
+
+        # ── Phase 1: parallel — pure Julia filters only ───────────────────────
+        # No Oscar calls here whatsoever.
+        candidates = Vector{Tuple{Vararg{UInt32}}}()
+        cand_lock  = ReentrantLock()
+
+        @threads :dynamic for facets_bin in items
+            next!(prog; showvalues = [(:seeds, length(db_seed)), (:Pic, Pic), (:m, m)])
+
+            is_seed_bit(facets_bin)    || continue
             is_mod2_sphere(facets_bin) || continue
 
+            # Structural link check (no Oscar): verify that each link's (d, nv)
+            # key is already present in the database — cheap early-out.
             Vmask = vertex_mask(facets_bin)
-            nv_K = count_ones(Vmask)
-            d = facet_dim(facets_bin[1])
-            key = (d, nv_K)
+            verts = vertices_from_mask(Vmask)
+            structurally_ok = true
 
-            db_seed = get!(database_tc_seed_PLS, key, Set{Tuple{Vararg{UInt32}}}())
+            for v in verts
+                Lk = find_seed_bit(link_facets(facets_bin, v))
+                if isempty(Lk)
+                    structurally_ok = false; break
+                end
+                key_L = (facet_dim(Lk[1]), count_ones(vertex_mask(Lk)))
+                if !haskey(database_tc_seed_PLS, key_L)
+                    structurally_ok = false; break
+                end
+            end
+            structurally_ok || continue
 
-            is_isomorphic_to_any(facets_bin, db_seed) && continue
+            lock(cand_lock) do
+                push!(candidates, Tuple(facets_bin))
+            end
+        end
 
+        # ── Phase 2: sequential Oscar checks, now index-accelerated ──────────
+        # Build index once from whatever is already in db_seed.
+        db_index = build_index(db_seed)
+        prog2 = Progress(length(candidates); desc="Iso checks (m=$m, Pic=$Pic): ")
+
+        for facets_bin in candidates
+            Vmask = vertex_mask(facets_bin)
             verts = vertices_from_mask(Vmask)
             all_links_ok = true
 
@@ -422,25 +506,24 @@ for m in 2:9
                 Lk = find_seed_bit(link_facets(facets_bin, v))
                 isempty(Lk) && (all_links_ok = false; break)
 
-                Lmask = vertex_mask(Lk)
-                nv_Lk = count_ones(Lmask)
-                d_Lk = facet_dim(Lk[1])
-                key_L = (d_Lk, nv_Lk)
-
-                # was haskey(database_tc_PLS, key_L) - but we no longer populate that
-                haskey(database_tc_seed_PLS, key_L) || (all_links_ok = false; break)
-                # (d_Lk>0 && is_mod2_sphere(Lk)) || (all_links_ok = false; break)
-                is_isomorphic_to_any(Lk, database_tc_seed_PLS[key_L]) || (all_links_ok = false; break)
+                key_L = (facet_dim(Lk[1]), count_ones(vertex_mask(Lk)))
+                if !haskey(database_tc_seed_PLS, key_L) ||
+                   !is_isomorphic_to_any(Lk, database_tc_seed_PLS[key_L])  # link db stays flat (small)
+                    all_links_ok = false; break
+                end
             end
 
-            all_links_ok || continue
+            if all_links_ok && !is_isomorphic_to_any_indexed(facets_bin, db_index)
+                push_indexed!(db_seed, db_index, facets_bin)
+            end
 
-            push!(db_seed, Tuple(facets_bin))
+            next!(prog2; showvalues = [(:candidates, length(candidates)),
+                                       (:seeds, length(db_seed)),
+                                       (:buckets, length(db_index))])
         end
 
-        key_out = (m - Pic - 1, m)
-        if haskey(database_tc_seed_PLS, key_out) && Pic==5
-            println("Seed count Pic=$Pic m=$m: ", length(database_tc_seed_PLS[key_out]))
+        if Pic == 5
+            println("Seed count Pic=$Pic m=$m: ", length(db_seed))
         end
     end
 end
