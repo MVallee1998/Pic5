@@ -3,7 +3,8 @@
 #SBATCH --job-name=Pic_5
 #SBATCH --output=res_Pic_5.txt
 #
-#SBATCH --ntasks=256
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=256
 #SBATCH --time=2:00:00
 #SBATCH --mem-per-cpu=100
 
