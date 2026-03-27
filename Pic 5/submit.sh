@@ -4,7 +4,7 @@
 #SBATCH --output=res_Pic_5.txt
 #
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=100
+#SBATCH --cpus-per-task=64
 #SBATCH --time=20:00
 #SBATCH --mem=100G
 
