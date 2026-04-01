@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-#SBATCH --job-name=Pic_5
-#SBATCH --output=res_Pic_5.txt
+#SBATCH --job-name=Pic_5_n=10
+#SBATCH --output=res_Pic_5_7-10.txt
 #
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64

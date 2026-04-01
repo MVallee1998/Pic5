@@ -699,7 +699,7 @@ end
 pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
 database_reduce_autom = Dict{Int,Vector{Set{BitVector}}}()
 
-mmax=9
+mmax=10
 
 
 build_finalDB_single_v!(pseudo_manifolds_DB,database_reduce_autom,mat_DB_bin,iso_DB,mmax)
@@ -734,7 +734,7 @@ end
 #     end
 # end
             
-open("rank_5_db_before_iso_7-9.jls", "w") do io
+open("rank_5_db_before_iso_7-10.jls", "w") do io
     serialize(io, database_before_iso)
 end
 
