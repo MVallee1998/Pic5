@@ -574,75 +574,77 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                     end
                 end
             else
-                # Compute canonical complexity representation with carrying
-                function compute_complexity_signature(num_free_list::Vector{Int})
-                    counts = Dict{Int,Int}()
-                    for nf in num_free_list
-                        counts[nf] = get(counts, nf, 0) + 1
-                    end
+                # # Compute canonical complexity representation with carrying
+                # function compute_complexity_signature(num_free_list::Vector{Int})
+                #     counts = Dict{Int,Int}()
+                #     for nf in num_free_list
+                #         counts[nf] = get(counts, nf, 0) + 1
+                #     end
                     
-                    changed = true
-                    while changed
-                        changed = false
-                        for k in sort(collect(keys(counts)))
-                            if counts[k] >= 2
-                                carry = counts[k] ÷ 2
-                                counts[k] = counts[k] % 2
-                                counts[k+1] = get(counts, k+1, 0) + carry
-                                changed = true
-                            end
-                        end
-                    end
+                #     changed = true
+                #     while changed
+                #         changed = false
+                #         for k in sort(collect(keys(counts)))
+                #             if counts[k] >= 2
+                #                 carry = counts[k] ÷ 2
+                #                 counts[k] = counts[k] % 2
+                #                 counts[k+1] = get(counts, k+1, 0) + carry
+                #                 changed = true
+                #             end
+                #         end
+                #     end
                     
-                    powers = sort(collect(keys(counts)), rev=true)
-                    return tuple([(p, counts[p]) for p in powers if counts[p] > 0]...)
-                end
+                #     powers = sort(collect(keys(counts)), rev=true)
+                #     return tuple([(p, counts[p]) for p in powers if counts[p] > 0]...)
+                # end
 
-                # Group by index_contraction to avoid redundant work
-                contraction_map = Dict{Int, Vector{Tuple{Int, Any}}}()
-                for (i, (idx, perm)) in enumerate(iso_DB[m][l])
-                    if !haskey(contraction_map, idx)
-                        contraction_map[idx] = []
-                    end
-                    push!(contraction_map[idx], (i, perm))
-                end
+                # # Group by index_contraction to avoid redundant work
+                # contraction_map = Dict{Int, Vector{Tuple{Int, Any}}}()
+                # for (i, (idx, perm)) in enumerate(iso_DB[m][l])
+                #     if !haskey(contraction_map, idx)
+                #         contraction_map[idx] = []
+                #     end
+                #     push!(contraction_map[idx], (i, perm))
+                # end
 
-                # Evaluate complexity for each UNIQUE index_contraction
-                best_index_contraction = nothing
-                best_signature = nothing
-
-                for (index_contraction_cand, pairs) in contraction_map
-                    num_free_list = Int[]
+                # # Evaluate complexity for each UNIQUE index_contraction
+                # best_index_contraction = nothing
+                # best_signature = nothing
+                # time0 = time()
+                # for (index_contraction_cand, pairs) in contraction_map
+                #     num_free_list = Int[]
                     
-                    for L_bit in pseudo_manifolds_DB[m-1][index_contraction_cand]
-                        perm = pairs[1][2]
-                        mandatory_facets_bin = relabel(mat_DB[m-1][index_contraction_cand][findall(L_bit)], perm)
-                        mandatory_facets_bit = subset_bitvector(bases_bin, mandatory_facets_bin)
+                #     for L_bit in pseudo_manifolds_DB[m-1][index_contraction_cand]
+                #         perm = pairs[1][2]
+                #         mandatory_facets_bin = relabel(mat_DB[m-1][index_contraction_cand][findall(L_bit)], perm)
+                #         mandatory_facets_bit = subset_bitvector(bases_bin, mandatory_facets_bin)
                         
-                        prep = prepare_kernel_enumeration(A, kernel_basis, mandatory_facets_bit)
-                        if prep !== nothing
-                            push!(num_free_list, prep[7])
-                        end
-                    end
+                #         prep = prepare_kernel_enumeration(A, kernel_basis, mandatory_facets_bit)
+                #         if prep !== nothing
+                #             push!(num_free_list, prep[7])
+                #         end
+                #     end
                     
-                    signature = compute_complexity_signature(num_free_list)
+                #     signature = compute_complexity_signature(num_free_list)
                     
-                    if best_signature === nothing || signature < best_signature
-                        best_signature = signature
-                        best_index_contraction = index_contraction_cand
-                    end
-                end
+                #     if best_signature === nothing || signature < best_signature
+                #         best_signature = signature
+                #         best_index_contraction = index_contraction_cand
+                #     end
+                # end
 
-                # Pick any (index_contraction, perm) pair with the best index_contraction
-                index_contraction = best_index_contraction
-                perm = nothing
-                for (idx, p) in iso_DB[m][l]
-                    if idx == best_index_contraction
-                        perm = p
-                        break
-                    end
-                end
+                # # Pick any (index_contraction, perm) pair with the best index_contraction
+                # index_contraction = best_index_contraction
+                # perm = nothing
+                # for (idx, p) in iso_DB[m][l]
+                #     if idx == best_index_contraction
+                #         perm = p
+                #         break
+                #     end
+                # end
+                # println(time() - time0, " seconds to find best index_contraction = $(index_contraction) with signature = $(best_signature) for m=$(m), l=$(l)")
 
+                index_contraction, perm = iso_DB[m][l][1]  # just pick the first one for now; TODO: implement the above complexity-based selection
                 links = collect(pseudo_manifolds_DB[m-1][index_contraction])
                 lk = ReentrantLock()
                 
@@ -696,13 +698,30 @@ iso_DB = open("rank_5_iso_DB_bin_all_v.jls", "r") do io
     deserialize(io)
 end
 
-pseudo_manifolds_DB = Dict{Int,Vector{Set{BitVector}}}()
-database_reduce_autom = Dict{Int,Vector{Set{BitVector}}}()
+
+
+pseudo_manifolds_DB = open("pseudo_manifolds_DB_7-9.jls", "r") do io
+    deserialize(io)
+end
+
+
+database_reduce_autom = open("database_reduce_autom_7-9.jls", "r") do io
+    deserialize(io)
+end
+
 
 mmax=10
 
 
-build_finalDB_single_v!(pseudo_manifolds_DB,database_reduce_autom,mat_DB_bin,iso_DB,mmax)
+build_finalDB_single_v!(pseudo_manifolds_DB,database_reduce_autom,mat_DB_bin,iso_DB,mmax,mstart=10)
+
+# open("pseudo_manifolds_DB_7-9.jls", "w") do io
+#     serialize(io, pseudo_manifolds_DB)
+# end
+
+# open("database_reduce_autom_7-9.jls", "w") do io
+#     serialize(io, database_reduce_autom)
+# end
 
 database_before_iso = Dict{Tuple{Int,Int}, Set{Vector{UInt32}}}()
 
