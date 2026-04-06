@@ -363,6 +363,9 @@ function prepare_kernel_enumeration(A::SparseMatrixCSC{Bool,Int}, B::Vector{BitV
     end
 
     num_free = length(free_indices)
+    if num_free>=40
+        @warn "Number of free variables is $num_free, which may lead to very long enumeration times."
+    end
 
     # precompute per-free-variable row support
     free_row_support = Vector{Vector{Tuple{Int,Vector{Int}}}}(undef, num_free)
@@ -460,7 +463,7 @@ function subset_bitvector(superset::Vector{UInt32}, subset::Vector{UInt32})
 end
 
 function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVector}}},
-                                  database_reduce_autom::Dict{Int,Vector{Set{BitVector}}},
+                                #   database_reduce_autom::Dict{Int,Vector{Set{BitVector}}},
                                   mat_DB::Dict{Int,Vector{Vector{UInt32}}},
                                   iso_DB::Dict{Int,Dict{Int,Vector{Tuple{Int,Any}}}},
                                   mmax; mstart=-1)
@@ -472,7 +475,7 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
     for m = mstart:mmax
         println(m)
         pseudo_manifolds_DB[m] = Vector{Set{BitVector}}()
-        database_reduce_autom[m] = Vector{Set{BitVector}}()
+        # database_reduce_autom[m] = Vector{Set{BitVector}}()
 
         for (l, bases_bin) in enumerate(mat_DB[m])
             V_bin = reduce(|, bases_bin)
@@ -480,83 +483,83 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
             ridges, A = boundary_incidence_facets_to_ridges(compl_bases_bin)
             kernel_basis = kernel_basis_mod2_sparse(A)
 
-            # ── build automorphism group & facet permutations ──────────────────
-            facets_M = [
-                [i for i = 1:(8*sizeof(cobase)) if (cobase >> (i-1)) & 1 == 1]
-                for cobase in compl_bases_bin
-            ]
-            M = simplicial_complex(facets_M)
-            faces_list = collect(facets(M))
+        #     # ── build automorphism group & facet permutations ──────────────────
+        #     facets_M = [
+        #         [i for i = 1:(8*sizeof(cobase)) if (cobase >> (i-1)) & 1 == 1]
+        #         for cobase in compl_bases_bin
+        #     ]
+        #     M = simplicial_complex(facets_M)
+        #     faces_list = collect(facets(M))
 
-            facets_internal = Vector{UInt32}(undef, length(faces_list))
-            for j in eachindex(faces_list)
-                mask = UInt32(0)
-                for v in faces_list[j]
-                    mask |= UInt32(1) << (v - 1)
-                end
-                facets_internal[j] = mask
-            end
-            index = Dict(facets_internal[i] => i for i in eachindex(facets_internal))
+        #     facets_internal = Vector{UInt32}(undef, length(faces_list))
+        #     for j in eachindex(faces_list)
+        #         mask = UInt32(0)
+        #         for v in faces_list[j]
+        #             mask |= UInt32(1) << (v - 1)
+        #         end
+        #         facets_internal[j] = mask
+        #     end
+        #     index = Dict(facets_internal[i] => i for i in eachindex(facets_internal))
 
-            G = automorphism_group(M)
-            all_autos = collect(elements(G))
+        #     G = automorphism_group(M)
+        #     all_autos = collect(elements(G))
 
-            @inline function permute_facet(mask::UInt32, g)
-                h = UInt32(0)
-                x = mask
-                while x != 0
-                    v = trailing_zeros(x) + 1
-                    h |= UInt32(1) << (g(v) - 1)
-                    x &= x - 1
-                end
-                return h
-            end
+        #     @inline function permute_facet(mask::UInt32, g)
+        #         h = UInt32(0)
+        #         x = mask
+        #         while x != 0
+        #             v = trailing_zeros(x) + 1
+        #             h |= UInt32(1) << (g(v) - 1)
+        #             x &= x - 1
+        #         end
+        #         return h
+        #     end
 
-            sigmas = Vector{Vector{Int}}(undef, length(all_autos))
-            for i in eachindex(all_autos)
-                g = all_autos[i]
-                σ = Vector{Int}(undef, length(facets_internal))
-                for j in eachindex(facets_internal)
-                    mask_img = permute_facet(facets_internal[j], g)
-                    if !haskey(index, mask_img)
-                        lbls = Int[]
-                        x = mask_img
-                        while x != 0
-                            v = trailing_zeros(x) + 1
-                            push!(lbls, v)
-                            x &= x - 1
-                        end
-                        error("permute_facet produced mask $(hex(mask_img)) not found in index; permuted facet labels = $lbls")
-                    end
-                    σ[j] = index[mask_img]
-                end
-                sigmas[i] = σ
-            end
+        #     sigmas = Vector{Vector{Int}}(undef, length(all_autos))
+        #     for i in eachindex(all_autos)
+        #         g = all_autos[i]
+        #         σ = Vector{Int}(undef, length(facets_internal))
+        #         for j in eachindex(facets_internal)
+        #             mask_img = permute_facet(facets_internal[j], g)
+        #             if !haskey(index, mask_img)
+        #                 lbls = Int[]
+        #                 x = mask_img
+        #                 while x != 0
+        #                     v = trailing_zeros(x) + 1
+        #                     push!(lbls, v)
+        #                     x &= x - 1
+        #                 end
+        #                 error("permute_facet produced mask $(hex(mask_img)) not found in index; permuted facet labels = $lbls")
+        #             end
+        #             σ[j] = index[mask_img]
+        #         end
+        #         sigmas[i] = σ
+        #     end
 
-            function apply_perm(χ::BitVector, σ::Vector{Int})
-                χ2 = falses(length(χ))
-                @inbounds for ii in eachindex(χ)
-                    if χ[ii]
-                        χ2[σ[ii]] = true
-                    end
-                end
-                return χ2
-            end
+        #     function apply_perm(χ::BitVector, σ::Vector{Int})
+        #         χ2 = falses(length(χ))
+        #         @inbounds for ii in eachindex(χ)
+        #             if χ[ii]
+        #                 χ2[σ[ii]] = true
+        #             end
+        #         end
+        #         return χ2
+        #     end
 
-            function canonical_rep(χ::BitVector)
-                best = χ
-                for σ in sigmas
-                    χ2 = apply_perm(χ, σ)
-                    if χ2 < best
-                        best = χ2
-                    end
-                end
-                return best
-            end
+        #     function canonical_rep(χ::BitVector)
+        #         best = χ
+        #         for σ in sigmas
+        #             χ2 = apply_perm(χ, σ)
+        #             if χ2 < best
+        #                 best = χ2
+        #             end
+        #         end
+        #         return best
+        #     end
             # ──────────────────────────────────────────────────────────────────
 
             push!(pseudo_manifolds_DB[m], Set{BitVector}())
-            push!(database_reduce_autom[m], Set{BitVector}())
+            # push!(database_reduce_autom[m], Set{BitVector}())
 
             if m == mmin
                 mandatory_facets_bit = falses(length(bases_bin))
@@ -565,12 +568,12 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                     facets_bin = compl_bases_bin[findall(K_bit)]
                     if euler_sphere_test(facets_bin)
                         push!(pseudo_manifolds_DB[m][l], copy(K_bit))
-                        nv = count_ones(reduce(|, facets_bin))
-                        if nv == m
-                            push!(database_reduce_autom[m][l], canonical_rep(K_bit))
-                        else
-                            push!(database_reduce_autom[m][l], copy(K_bit))
-                        end
+                        # nv = count_ones(reduce(|, facets_bin))
+                        # if nv == m
+                        #     push!(database_reduce_autom[m][l], canonical_rep(K_bit))
+                        # else
+                        #     push!(database_reduce_autom[m][l], copy(K_bit))
+                        # end
                     end
                 end
             else
@@ -675,10 +678,10 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
                         for K_bit in all_solutions_bit
                             facets_bin = compl_bases_bin[findall(K_bit)]
                             if euler_sphere_test(facets_bin)
-                                canon = canonical_rep(K_bit)
+                                # canon = canonical_rep(K_bit)
                                 lock(lk) do
                                     push!(pseudo_manifolds_DB[m][l], copy(K_bit))
-                                    push!(database_reduce_autom[m][l], canon)
+                                    # push!(database_reduce_autom[m][l], canon)
                                 end
                             end
                         end
@@ -705,15 +708,16 @@ pseudo_manifolds_DB = open("pseudo_manifolds_DB_7-9.jls", "r") do io
 end
 
 
-database_reduce_autom = open("database_reduce_autom_7-9.jls", "r") do io
-    deserialize(io)
-end
+# database_reduce_autom = open("database_reduce_autom_7-9.jls", "r") do io
+#     deserialize(io)
+# end
 
 
 mmax=10
 
 
-build_finalDB_single_v!(pseudo_manifolds_DB,database_reduce_autom,mat_DB_bin,iso_DB,mmax,mstart=10)
+# build_finalDB_single_v!(pseudo_manifolds_DB,database_reduce_autom,mat_DB_bin,iso_DB,mmax,mstart=10)
+build_finalDB_single_v!(pseudo_manifolds_DB,mat_DB_bin,iso_DB,mmax,mstart=10)
 
 # open("pseudo_manifolds_DB_7-9.jls", "w") do io
 #     serialize(io, pseudo_manifolds_DB)
@@ -731,7 +735,7 @@ for m=7:mmax
         # display(bases)
         V = reduce(|,bases)
         compl_bases = [base⊻V for base in bases]
-        @showprogress desc="for m=$(m) " for facets_bit in database_reduce_autom[m][l]
+        @showprogress desc="for m=$(m) " for facets_bit in pseudo_manifolds_DB[m][l]
             facets_bin = compl_bases[findall(facets_bit)]
             nv_K = count_ones(reduce(|,facets_bin))
             d_K = count_ones(facets_bin[1])-1
