@@ -1,4 +1,4 @@
-include("algo_parallel_v_low_mem.jl")
+include("algo_parallel_gray_low_mem.jl")
 
 
 mat_DB_bin = open("rank_5_mat_DB_bin.jls", "r") do io
