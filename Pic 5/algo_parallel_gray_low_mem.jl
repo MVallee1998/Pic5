@@ -384,7 +384,7 @@ function prepare_kernel_enumeration(A::SparseMatrixCSC{Bool,Int}, B::Vector{BitV
 end
 
 # Part 2: Gray code enumeration (expensive)
-function enumerate_from_prepared_parallel(prep_result)
+function enumerate_from_prepared(prep_result)
     (B_ech, pivots, free_indices, y_forced, rows, free_row_support, num_free, is_empty_basis) = prep_result
 
     m_rows = length(rows)
