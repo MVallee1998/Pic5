@@ -507,7 +507,7 @@ function build_finalDB_single_v_one_m!(pseudo_manifolds_DB::Dict{Int,Vector{Set{
     println(m)
 
     pseudo_manifolds_DB[m] = Vector{Set{BitVector}}()
-
+    println(length(mat_DB[m]), " mat_DB entries for m=$(m). ")
     for (l, bases_bin) in enumerate(mat_DB[m])
         V_bin = reduce(|, bases_bin)
         compl_bases_bin = [base ⊻ V_bin for base in bases_bin]
