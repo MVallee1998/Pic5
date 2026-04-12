@@ -21,10 +21,19 @@ pseudo_manifolds_DB[10] = Vector{Set{BitVector}}[]
     pseudo_manifolds_DB_k = open("new_pseudo_manifolds_DB_10_$(k).jls", "r") do io
         deserialize(io)
     end
-    push!(pseudo_manifolds_DB[10], pseudo_manifolds_DB_k)
+    selected_pseudomanifolds = Set{BitVector}()
+    V = reduce(|, mat_DB_bin[10][k])
+    compl_basis_vecs = [b ⊻ V for b in mat_DB_bin[10][k]]   # ← renommé
+    for facets_bit in pseudo_manifolds_DB_k
+        facets_bin = compl_basis_vecs[findall(facets_bit)]
+        nv_K = count_ones(reduce(|, facets_bin))
+        nv_K == 10 && push!(selected_pseudomanifolds, facets_bit)
+    end
+
+    push!(pseudo_manifolds_DB[10], selected_pseudomanifolds)
 end
 
-open("pseudo_manifolds_DB_7-10.jls", "w") do io
+open("pseudo_manifolds_DB_7-10_new.jls", "w") do io
     serialize(io, pseudo_manifolds_DB)
 end
 

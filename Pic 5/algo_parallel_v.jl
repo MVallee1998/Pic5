@@ -433,13 +433,105 @@ function enumerate_from_prepared(prep_result)
     return results
 end
 
+function enumerate_from_prepared_parallel(prep_result)
+    (B_ech, pivots, free_indices, y_forced, rows, free_row_support, num_free, is_empty_basis) = prep_result
+
+    m_rows = length(rows)
+    n      = length(y_forced)
+
+    # ── cas dégénérés ────────────────────────────────────────────────────────
+    if is_empty_basis || num_free == 0
+        rs = zeros(Int, m_rows)
+        for r in 1:m_rows; for j in rows[r]; rs[r] += y_forced[j]; end; end
+        result = BitVector[]
+        all(s -> s == 0 || s == 2, rs) && push!(result, copy(y_forced))
+        return result
+    end
+
+    # ── découpage en blocs ───────────────────────────────────────────────────
+    num_threads = Threads.nthreads()
+    prefix_bits = min(ceil(Int, log2(max(num_threads, 2))), num_free - 1)
+
+    if prefix_bits == 0 || num_free <= prefix_bits
+        return enumerate_from_prepared(prep_result)
+    end
+
+    num_blocks  = 1 << prefix_bits
+    suffix_bits = num_free - prefix_bits
+    block_size  = UInt64(1) << suffix_bits
+
+    thread_results = [BitVector[] for _ in 1:num_blocks]
+
+    Threads.@threads for block_idx in 0:(num_blocks - 1)
+        # ── `let` isole toutes les variables du thread ───────────────────────
+        let block_idx = block_idx,
+            local_results = thread_results[block_idx + 1],
+            # copies locales au thread des données mutables
+            y        = copy(y_forced),
+            row_sums = zeros(Int, m_rows)
+
+            # ── état initial : code de Gray à l'indice `start` ──────────────
+            start      = UInt64(block_idx) * block_size
+            gray_start = start ⊻ (start >> 1)
+
+            for fi in 1:num_free
+                if (gray_start >> (fi - 1)) & UInt64(1) == UInt64(1)
+                    y .⊻= B_ech[free_indices[fi]]
+                end
+            end
+
+            for r in 1:m_rows
+                @inbounds for j in rows[r]
+                    row_sums[r] += y[j]
+                end
+            end
+
+            # ── check inliné (pas de closure capturante) ─────────────────────
+            valid = true
+            @inbounds for s in row_sums
+                if s != 0 && s != 2; valid = false; break; end
+            end
+            valid && push!(local_results, copy(y))
+
+            # ── énumération par code de Gray dans le bloc ────────────────────
+            stop = start + block_size - UInt64(1)
+            for i in (start + UInt64(1)):stop
+                gray      =  i      ⊻ ( i      >> 1)
+                gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
+                fi  = trailing_zeros(gray ⊻ gray_prev) + 1
+                idx = free_indices[fi]
+
+                y .⊻= B_ech[idx]
+                @inbounds for (r, cols) in free_row_support[fi]
+                    for j in cols
+                        row_sums[r] += y[j] ? 1 : -1
+                    end
+                end
+
+                valid = true
+                @inbounds for s in row_sums
+                    if s != 0 && s != 2; valid = false; break; end
+                end
+                valid && push!(local_results, copy(y))
+            end
+        end # let
+    end
+
+    return reduce(vcat, thread_results)
+end
+
 # Wrapper that calls both (for backward compatibility)
-function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int}, B::Vector{BitVector}, S::BitVector)
+function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int}, B::Vector{BitVector}, S::BitVector; parallel=false)
     prep = prepare_kernel_enumeration(A, B, S)
     prep === nothing && return BitVector[]
-    
-    return enumerate_from_prepared(prep)
+    if parallel
+        return enumerate_from_prepared_parallel(prep)
+    else
+        return enumerate_from_prepared(prep)
+    end
 end
+
+
 
 function relabel(facets_bin::Vector{UInt32},perm)
     rel_facets_bin = Vector{UInt32}()
@@ -495,44 +587,38 @@ function build_finalDB_single_v!(pseudo_manifolds_DB::Dict{Int,Vector{Set{BitVec
 
                 index_contraction, perm = iso_DB[m][l][1]
                 links = collect(pseudo_manifolds_DB[m-1][index_contraction])
-                lk = ReentrantLock()
+                # lk = ReentrantLock()
                 
-                @showprogress desc="Number of links $(length(links))" Threads.@threads for L_bit in links
-                    let L_bit = L_bit,
-                        mat_DB = mat_DB,
-                        m = m,
-                        index_contraction = index_contraction,
-                        perm = perm,
-                        bases_bin = bases_bin,
-                        compl_bases_bin = compl_bases_bin,
-                        A = A,
-                        kernel_basis = kernel_basis,
-                        lk = lk,
-                        l = l
+                @showprogress desc="Number of links $(length(links))" for L_bit in links
+                    # let L_bit = L_bit,
+                    #     mat_DB = mat_DB,
+                    #     m = m,
+                    #     index_contraction = index_contraction,
+                    #     perm = perm,
+                    #     bases_bin = bases_bin,
+                    #     compl_bases_bin = compl_bases_bin,
+                    #     A = A,
+                    #     kernel_basis = kernel_basis,
+                    #     lk = lk,
+                    #     l = l
                         
-                        mandatory_facets_bin = relabel(mat_DB[m-1][index_contraction][findall(L_bit)], perm)
-                        mandatory_facets_bit = subset_bitvector(bases_bin, mandatory_facets_bin)
-                        
-                        if count(mandatory_facets_bit) != length(mandatory_facets_bin)
-                            lock(lk) do
-                                @warn "Some mandatory facets not found in bases!" m l mandatory_facets_bin
-                            end
-                        end
-                        
-                        all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A, kernel_basis, mandatory_facets_bit)
-                        
-                        for K_bit in all_solutions_bit
-                            facets_bin = compl_bases_bin[findall(K_bit)]
-                            if euler_sphere_test(facets_bin)
-                                lock(lk) do
-                                    push!(pseudo_manifolds_DB[m][l], copy(K_bit))
-                                end
-                            end
+                    mandatory_facets_bin = relabel(mat_DB[m-1][index_contraction][findall(L_bit)], perm)
+                    mandatory_facets_bit = subset_bitvector(bases_bin, mandatory_facets_bin)
+                    
+                    if count(mandatory_facets_bit) != length(mandatory_facets_bin)
+                        @warn "Some mandatory facets not found in bases!" m l mandatory_facets_bin
+                    end
+                    
+                    all_solutions_bit = enumerate_kernel_with_constraints_bitvector(A, kernel_basis, mandatory_facets_bit;parallel = true)
+                    
+                    for K_bit in all_solutions_bit
+                        facets_bin = compl_bases_bin[findall(K_bit)]
+                        if euler_sphere_test(facets_bin)
+                            push!(pseudo_manifolds_DB[m][l], copy(K_bit))
                         end
                     end
-                end
-
-                
+                    # end
+                end 
             end
         end
     end

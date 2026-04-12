@@ -386,6 +386,56 @@ end
 # Part 2: Gray code enumeration (expensive)
 function enumerate_from_prepared(prep_result)
     (B_ech, pivots, free_indices, y_forced, rows, free_row_support, num_free, is_empty_basis) = prep_result
+    
+    results = BitVector[]
+    m = length(rows)
+    n = length(y_forced)
+
+    if is_empty_basis || num_free == 0
+        rs = zeros(Int, m)
+        for r in 1:m; for j in rows[r]; rs[r] += y_forced[j]; end; end
+        all(s -> s == 0 || s == 2, rs) && push!(results, copy(y_forced))
+        return results
+    end
+
+    y = copy(y_forced)
+    row_sums = zeros(Int, m)
+    for r in 1:m; for j in rows[r]; row_sums[r] += y[j]; end; end
+
+    @inline function check_row_sums()
+        @inbounds for s in row_sums
+            (s == 0 || s == 2) || return false
+        end
+        return true
+    end
+
+    sizehint!(results, min(1 << num_free, 1000))
+    check_row_sums() && push!(results, copy(y))
+
+    total = UInt64(1) << num_free
+
+    for i in UInt64(1):(total - UInt64(1))
+        gray      = i ⊻ (i >> 1)
+        gray_prev = (i - 1) ⊻ ((i - 1) >> 1)
+        fi = trailing_zeros(gray ⊻ gray_prev) + 1
+        idx = free_indices[fi]
+
+        y .⊻= B_ech[idx]
+        for (r, cols) in free_row_support[fi]
+            for j in cols
+                row_sums[r] += y[j] ? 1 : -1
+            end
+        end
+
+        check_row_sums() && push!(results, copy(y))
+    end
+
+    return results
+end
+
+# Part 2: Gray code enumeration (expensive)
+function enumerate_from_prepared_parallel(prep_result)
+    (B_ech, pivots, free_indices, y_forced, rows, free_row_support, num_free, is_empty_basis) = prep_result
 
     m_rows = length(rows)
     n      = length(y_forced)
@@ -476,7 +526,7 @@ function enumerate_kernel_with_constraints_bitvector(A::SparseMatrixCSC{Bool,Int
     prep = prepare_kernel_enumeration(A, B, S)
     prep === nothing && return BitVector[]
     
-    return enumerate_from_prepared(prep)
+    return enumerate_from_prepared_parallel(prep)
 end
 
 function relabel(facets_bin::Vector{UInt32},perm)
