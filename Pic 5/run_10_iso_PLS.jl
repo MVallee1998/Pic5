@@ -72,7 +72,7 @@ end
 # database_tc_seed_PLS[(2, 6)] = Set([oct_facets])
 
 # ----------------------- Initialize from existing -----------------------------
-database_tc_seed_PLS = open("Pic_5_tc_seed_PLS_5-9.jls.jls", "r") do io
+database_tc_seed_PLS = open("Pic_5_tc_seed_PLS_5-9.jls", "r") do io
     deserialize(io)
 end
 
