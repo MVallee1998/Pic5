@@ -13,45 +13,42 @@ mat_DB_bin = open("rank_5_mat_DB_bin.jls", "r") do io
     deserialize(io)
 end
 
-iso_DB = open("rank_5_iso_DB_bin_all_v.jls", "r") do io
-    deserialize(io)
-end
+
+# pseudo_manifolds_DB = open("pseudo_manifolds_DB_7-9.jls", "r") do io
+#     deserialize(io)
+# end
+
+# database_before_iso = Dict{Tuple{Int,Int}, Set{Vector{UInt32}}}()
 
 
-pseudo_manifolds_DB = open("pseudo_manifolds_DB_7-9.jls", "r") do io
-    deserialize(io)
-end
-
-database_before_iso = Dict{Tuple{Int,Int}, Set{Vector{UInt32}}}()
-
-
-for m=7:9
-    for (l,bases) in enumerate(mat_DB_bin[m])
-        # display(bases)
-        V = reduce(|,bases)
-        compl_bases = [base⊻V for base in bases]
-        @showprogress desc="for m=$(m) " for facets_bit in pseudo_manifolds_DB[m][l]
-            facets_bin = compl_bases[findall(facets_bit)]
-            nv_K = count_ones(reduce(|,facets_bin))
-            d_K = count_ones(facets_bin[1])-1
-            nv_K == m || continue
-            if !((d_K,nv_K) in keys(database_before_iso))
-                database_before_iso[(d_K,nv_K)] = Set{Vector{UInt32}}()
-            end
-            push!(database_before_iso[(d_K,nv_K)],copy(sort(facets_bin)))
-        end
-    end
-end
+# for m=7:9
+#     for (l,bases) in enumerate(mat_DB_bin[m])
+#         # display(bases)
+#         V = reduce(|,bases)
+#         compl_bases = [base⊻V for base in bases]
+#         @showprogress desc="for m=$(m) " for facets_bit in pseudo_manifolds_DB[m][l]
+#             facets_bin = compl_bases[findall(facets_bit)]
+#             nv_K = count_ones(reduce(|,facets_bin))
+#             d_K = count_ones(facets_bin[1])-1
+#             nv_K == m || continue
+#             d_K == m-6 || continue
+#             if !((d_K,nv_K) in keys(database_before_iso))
+#                 database_before_iso[(d_K,nv_K)] = Set{Vector{UInt32}}()
+#             end
+#             push!(database_before_iso[(d_K,nv_K)],copy(sort(facets_bin)))
+#         end
+#     end
+# end
 
 
             
-open("rank_5_db_before_iso_7-9_new.jls", "w") do io
-    serialize(io, database_before_iso)
-end
-
-# database_before_iso = open("rank_5_db_before_iso_7-10.jls", "r") do io
-#     deserialize(io)
+# open("rank_5_db_before_iso_7-9_new.jls", "w") do io
+#     serialize(io, database_before_iso)
 # end
+
+database_before_iso = open("rank_5_db_before_iso_7-9.jls", "r") do io
+    deserialize(io)
+end
 
 
 # Keep original database structure - only bin format
@@ -60,40 +57,31 @@ end
 #     deserialize(io)
 # end
 
-# database_tc_seed_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt32}}}}()
+database_tc_seed_PLS = Dict{Tuple{Int,Int},Set{Tuple{Vararg{UInt32}}}}()
 
-database_tc_seed_PLS_16 = open("Pic_4_tc_PLS_6-13.jls", "r") do io
-    deserialize(io)
-end
-
-database_tc_seed_PLS = convert_dict_uint16_to_uint32(database_tc_seed_PLS_16)
-
-
-# for m in 2:9
-#     for Pic in 1:5
-#         key = (m - Pic - 1, m)
-#         haskey(database_tc_seed_PLS, key) || continue
-#         database_tc_seed_PLS[key] = Set{Tuple{Vararg{UInt32}}}(
-#             Tuple(UInt32(f) for f in facets_bin)
-#             for facets_bin in database_tc_seed_PLS[key]
-#         )
-#     end
+# database_tc_seed_PLS_16 = open("Pic_4_tc_PLS_6-13.jls", "r") do io
+#     deserialize(io)
 # end
 
-# # Initialize
-# # database_tc_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
-# database_tc_seed_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
+# database_tc_seed_PLS = convert_dict_uint16_to_uint32(database_tc_seed_PLS_16)
 
-# cube_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))
-# # database_tc_PLS[(3, 8)] = Set([cube_facets])
-# database_tc_seed_PLS[(3, 8)] = Set([cube_facets])
 
-# oct_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]))
-# # database_tc_PLS[(2, 6)] = Set([oct_facets])
-# database_tc_seed_PLS[(2, 6)] = Set([oct_facets])
 
-for m in 7:9
-    for Pic in 5:5
+
+# Initialize
+# database_tc_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
+database_tc_seed_PLS[(0, 2)] = Set([(UInt32(1), UInt32(2))])
+
+cube_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6, 7:8)]))
+# database_tc_PLS[(3, 8)] = Set([cube_facets])
+database_tc_seed_PLS[(3, 8)] = Set([cube_facets])
+
+oct_facets = index_to_bin(vec([[x...] for x in Iterators.product(1:2, 3:4, 5:6)]))
+# database_tc_PLS[(2, 6)] = Set([oct_facets])
+database_tc_seed_PLS[(2, 6)] = Set([oct_facets])
+
+for m in 3:9
+    for Pic in 1:5
         key_in = (m - Pic - 1, m)
         haskey(database_before_iso, key_in) || continue
         items   = collect(database_before_iso[key_in])
@@ -106,7 +94,7 @@ for m in 7:9
             local_cands = [Vector{Tuple{Vararg{UInt32}}}() for _ in 1:length(items)]
             @threads :dynamic for i in eachindex(items)
                 facets_bin = items[i]
-                next!(prog)
+                next!(prog; showvalues = [(:seeds, length(db_seed)), (:Pic, Pic), (:m, m)])
                 is_seed_bit(facets_bin)    || continue
                 is_mod2_sphere(facets_bin) || continue
                 push!(local_cands[i], Tuple(facets_bin))

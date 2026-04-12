@@ -7,10 +7,6 @@ mat_DB_bin = open("rank_5_mat_DB_bin.jls", "r") do io
     deserialize(io)
 end
 
-iso_DB = open("rank_5_iso_DB_bin_all_v.jls", "r") do io
-    deserialize(io)
-end
-
 pseudo_manifolds_DB = open("pseudo_manifolds_DB_7-10.jls", "r") do io
     deserialize(io)
 end
